@@ -17,7 +17,7 @@ def isodate(second=None):
 def isodatetime(second=None):
     """ Make a string of date and time
     """
-    if not second: second = time.time()
+    if not second: second = time()
     return strftime('%Y-%m-%d %H:%M:%S', localtime(second))
 
 
