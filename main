@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+# Author: Joshua Chen
+# Date: 2016-01-03
+# Location: Shenzhen
+# Description: a log tool with encrypted remote backup.
+
+import sys, os
+
+prog_path = os.path.realpath(__file__)
+prog_dir  = os.path.dirname(prog_path)
+lib_dir   = os.path.join(prog_dir, 'lib')
+sys.path.insert(0, lib_dir)
+
+from util.common import editContent
+from interact import interact
+import timeutils
+
+data_dir = os.path.join(prog_dir, 'data')
+
+
+class Record:
+    """ Define the fields and methods of a record
+    """
+    def __init__(self, subject, time=None, scene='',
+                        people='', tag='', data=''):
+        time = time if time else timeutils.isodatetime()
+        self.subject   =  subject
+        self.time      =  timeutlis.isostrtosecond(time)
+        self.scene     =  scene
+        self.people    =  people
+        self.tag       =  tag
+        self.data      =  data
+
+    def __repr__(self):
+        text = '%s\n%s\n%s\n%s\n%s\n\n%s'
+        text = text % (self.subject,
+                       self.time,
+                       self.scene
+                       self.people,
+                       self.tag,
+                       self.data)
+        return text
+
+    @staticmethod
+    def parse(data):
+        """ Parse the data, return a Record instance
+        data shall be a str object.
+        """
+        lines = data.rstrip('\n').split('\n')
+        subject = lines[0]
+        time    = timeutlis.isostrtosecond(lines[1])
+        scene   = lines[2]
+        people  = lines[3]
+        tag     = lines[4]
+        lines   = lines[6:] # one empty line between the data and header
+        data    = '\n'.join(lines) + '\n'
+        return Record(subject, time, scene, people, tag, data)
+
+
+class Git:
+    """ Git related operations
+    """
+
+
+class Log:
+    """ All log operations defined here
+    """
+
+    def __init__(self):
+        self.git = Git()
+
+    def lastScene(self):
+        """ Fetch the recently used scene from the history
+        """
+        raw    = self.git.last()
+        record = Record.parse(raw)
+        return record.scene

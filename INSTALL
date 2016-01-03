@@ -1,0 +1,2 @@
+Copy the whole directory somewhere you like, and create a symbolic link in the PATH for the 'main' file.
+All log files are stored in directory 'data', directly copy it to backup log data.

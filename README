@@ -1,0 +1,5 @@
+A log program that can add, delete, edit, list and search entries, it syncs data with the server using git, all data that sent to the server are encrypted, plaintext data that is sensitive only exposed on the client side.
+
+See LICENSE for license agreement.
+
+See INSTALL for installation instructions.
