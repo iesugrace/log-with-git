@@ -20,11 +20,18 @@ data_dir = os.path.join(prog_dir, 'data')
 
 class Record:
     """ Define the fields and methods of a record
+    Fields and types:
+    subject  --  str
+    time     --  int
+    scene    --  str
+    people   --  str
+    tag      --  str
+    data     --  bytes
     """
     sep = ': '  # separator between key and value
 
     def __init__(self, subject, time=None, scene='',
-                        people='', tag='', data=''):
+                        people='', tag='', data=b''):
         time = time if time else timeutils.isodatetime()
         self.subject   =  subject
         self.time      =  timeutils.strtosecond(time)
@@ -34,14 +41,34 @@ class Record:
         self.data      =  data
 
     def __repr__(self):
-        text = 'Subject%s%s\nTime%s%s\nScene%s%s\nPeople%s%s\nTag%s%s\n\n%s'
+        text = self.__header()
+        try:
+            data = self.data.decode()
+        except UnicodeDecodeError:
+            data = "-->> Binary data <<--\n"
+        text = '%s\n\n%s' % (text, data)
+        return text
+
+    def __header(self):
+        """ Construct the header of the Log
+        Return a str object, no trailing new-line.
+        """
+        text = 'Subject%s%s\nTime%s%s\nScene%s%s\nPeople%s%s\nTag%s%s'
         text = text % (self.sep, self.subject,
                        self.sep, timeutils.isodatetime(self.time),
                        self.sep, self.scene,
                        self.sep, self.people,
-                       self.sep, self.tag,
-                       self.data)
+                       self.sep, self.tag)
         return text
+
+    def bytes(self):
+        """ Similar to __repr__, but return a bytes,
+        and the 'data' field is presented intact.
+        """
+        text = self.__header()
+        res  = text.encode()
+        res += (b'\n\n' + self.data)
+        return res
 
     def elements(self):
         """ Return a dictionary containing
@@ -78,7 +105,7 @@ class LogRecord(Record):
         fileName   =  self.genName(timestamp)
         filePath   =  os.path.join(dirName, fileName)
         os.makedirs(dirName, exist_ok=True)
-        open(filePath, 'w').write(self.__repr__())
+        open(filePath, 'wb').write(self.bytes())
         #
         # create a git commit here
         #
@@ -106,21 +133,21 @@ class LogRecord(Record):
 
     @staticmethod
     def parse(data):
-        """ Parse the data, return a LogRecord instance
-        data shall be a str object.
+        """ Parse the raw log data, return a LogRecord instance,
+        'data' shall be a bytes object.
         """
-        lines = data.rstrip('\n').split('\n')
+        lines = data.split('\n')
         try:
-            subject = LogRecord.stripKey(lines[0])
-            time    = timeutils.isostrtosecond(LogRecord.stripKey(lines[1]))
-            scene   = LogRecord.stripKey(lines[2])
-            people  = LogRecord.stripKey(lines[3])
-            tag     = LogRecord.stripKey(lines[4])
+            subject = LogRecord.stripKey(lines[0].decode())
+            time    = timeutils.isostrtosecond(LogRecord.stripKey(lines[1].decode()))
+            scene   = LogRecord.stripKey(lines[2].decode())
+            people  = LogRecord.stripKey(lines[3].decode())
+            tag     = LogRecord.stripKey(lines[4].decode())
             lines   = lines[6:] # one empty line between the data and header
         except IndexError:  # invalid log data
             return None
         else:
-            data    = '\n'.join(lines) + '\n'
+            data    = b'\n'.join(lines)
             return LogRecord(subject, time, scene, people, tag, data)
 
 
@@ -142,7 +169,7 @@ class Log:
         return ''
 
     def add(self, subject=None, time=None, scene='',
-                    people='', tag='', data='', interactive=False):
+                    people='', tag='', data=b'', interactive=False):
         """ Add a log record to the system
         When interactive is True, ask data for subject, time, scene,
         people, tag, data from the use interactively, the provided
@@ -199,6 +226,7 @@ class Log:
 
     def makeLogEntry(self, *junk, **args):
         """ Make a LogRecord instance interactively
+        'data' in the args must be a bytes.
         """
         data     =  args.pop('data')
         requests = self.makeRequests(**args)
@@ -208,8 +236,6 @@ class Log:
         scene    =  i['scene']
         people   =  i['people']
         tag      =  i['tag']
-        if data:
-            data = data.encode()
         data   = editContent(data).decode()
         record = LogRecord(subject, time, scene, people, tag, data)
         return record
@@ -242,9 +268,11 @@ def add(args):
     assert (subject != None and subject != ''), "invalid subject"
     if data:        # data provided
         interactive = False
+        data = data.encode()
     elif not os.isatty(sys.stdin.fileno()):
         interactive = False
-        data = sys.stdin.read()
+        stdin = os.fdopen(sys.stdin.fileno(), 'rb')
+        data = stdin.read()
     logger = Log()
     logger.add(subject, time, scene, people, tag, data, interactive)
 
