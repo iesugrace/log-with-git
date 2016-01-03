@@ -11,8 +11,8 @@ prog_dir  = os.path.dirname(prog_path)
 lib_dir   = os.path.join(prog_dir, 'lib')
 sys.path.insert(0, lib_dir)
 
-from util.common import editContent
-from interact import interact
+from common import editContent
+import interact
 import timeutils
 
 data_dir = os.path.join(prog_dir, 'data')
@@ -21,45 +21,107 @@ data_dir = os.path.join(prog_dir, 'data')
 class Record:
     """ Define the fields and methods of a record
     """
+    sep = ': '  # separator between key and value
+
     def __init__(self, subject, time=None, scene='',
                         people='', tag='', data=''):
         time = time if time else timeutils.isodatetime()
         self.subject   =  subject
-        self.time      =  timeutlis.isostrtosecond(time)
+        self.time      =  timeutils.strtosecond(time)
         self.scene     =  scene
         self.people    =  people
         self.tag       =  tag
         self.data      =  data
 
     def __repr__(self):
-        text = '%s\n%s\n%s\n%s\n%s\n\n%s'
-        text = text % (self.subject,
-                       self.time,
-                       self.scene
-                       self.people,
-                       self.tag,
+        text = 'Subject%s%s\nTime%s%s\nScene%s%s\nPeople%s%s\nTag%s%s\n\n%s'
+        text = text % (self.sep, self.subject,
+                       self.sep, timeutils.isodatetime(self.time),
+                       self.sep, self.scene,
+                       self.sep, self.people,
+                       self.sep, self.tag,
                        self.data)
         return text
 
-    @staticmethod
-    def parse(data):
-        """ Parse the data, return a Record instance
-        data shall be a str object.
+    def elements(self):
+        """ Return a dictionary containing
+        all elements of the record
         """
-        lines = data.rstrip('\n').split('\n')
-        subject = lines[0]
-        time    = timeutlis.isostrtosecond(lines[1])
-        scene   = lines[2]
-        people  = lines[3]
-        tag     = lines[4]
-        lines   = lines[6:] # one empty line between the data and header
-        data    = '\n'.join(lines) + '\n'
-        return Record(subject, time, scene, people, tag, data)
+        return self.__dict__
 
 
 class Git:
     """ Git related operations
     """
+    def last(self):
+        """ Return the file content of the last commit
+        it shall be one file only.
+        """
+        return None
+
+
+class LogRecord(Record):
+    """ Log Record capable of Git operations
+    OS aware operations defined here.
+    """
+    def __init__(self, *pargs, **kargs):
+        Record.__init__(self, *pargs, **kargs)
+        self.git = Git()
+
+    def save(self):
+        """ Save instance data to disk,
+        and create a git commit
+        """
+        timestamp  =  self.time
+        dateEle    =  timeutils.isodate(timestamp).split('-')
+        dirName    =  os.path.join(data_dir, *dateEle)
+        fileName   =  self.genName(timestamp)
+        filePath   =  os.path.join(dirName, fileName)
+        os.makedirs(dirName, exist_ok=True)
+        open(filePath, 'w').write(self.__repr__())
+        #
+        # create a git commit here
+        #
+
+    def genName(self, timestamp):
+        """ Generate a random file name base on the timestamp
+        """
+        import random
+        s = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+        res = ''
+        length = 10
+        for i in range(length):
+            res += random.choice(s)
+        return '%s%s' % (timestamp, res)
+
+    @staticmethod
+    def stripKey(line):
+        """ Cut off the key which is in the front of the line
+        """
+        i = line.find(LogRecord.sep)
+        if i == -1:
+            return line
+        else:
+            return line[i+2]
+
+    @staticmethod
+    def parse(data):
+        """ Parse the data, return a LogRecord instance
+        data shall be a str object.
+        """
+        lines = data.rstrip('\n').split('\n')
+        try:
+            subject = LogRecord.stripKey(lines[0])
+            time    = timeutils.isostrtosecond(LogRecord.stripKey(lines[1]))
+            scene   = LogRecord.stripKey(lines[2])
+            people  = LogRecord.stripKey(lines[3])
+            tag     = LogRecord.stripKey(lines[4])
+            lines   = lines[6:] # one empty line between the data and header
+        except IndexError:  # invalid log data
+            return None
+        else:
+            data    = '\n'.join(lines) + '\n'
+            return LogRecord(subject, time, scene, people, tag, data)
 
 
 class Log:
@@ -72,6 +134,141 @@ class Log:
     def lastScene(self):
         """ Fetch the recently used scene from the history
         """
-        raw    = self.git.last()
-        record = Record.parse(raw)
-        return record.scene
+        raw = self.git.last()
+        if raw != None:
+            record = LogRecord.parse(raw)
+            if record != None:
+                return record.scene
+        return ''
+
+    def add(self, subject=None, time=None, scene='',
+                    people='', tag='', data='', interactive=False):
+        """ Add a log record to the system
+        When interactive is True, ask data for subject, time, scene,
+        people, tag, data from the use interactively, the provided
+        arguments are used as the default value for user's choice.
+        """
+        if interactive:
+            record = self.makeLogEntry(subject=subject, time=time,
+                     scene=scene, people=people, tag=tag, data=data)
+        else:
+            assert (subject != None and subject != ''), "invalid subject"
+            record = LogRecord(subject, time, scene, people, tag, data)
+        record.save()
+
+    def makeOneRequest(self, name, default, datatype, reader, desc):
+        """ Create a request entry, used to interactively collect
+        information from the user. A request is a dictionary object
+        that contains necessary information to interact with the user.
+        """
+        suffix = (' [%s]: ' % default) if default else ': '
+        prompt = desc + suffix
+        if reader:
+            actual_reader = (lambda prompt, default: reader(prompt, default))
+        else:
+            actual_reader = reader
+        return dict(name=name, prompt=prompt, datatype=datatype,
+                    default=default, reader=actual_reader)
+
+    def makeRequests(self, *, record=None, subject=None, time=None,
+                    scene=None, people=None, tag=None):
+        """ Create the necessary requests data for collecting
+        information for a Record from the user interactively.
+        """
+        if record:      # a LogRecord instance provided
+            subject  =  record.subject
+            time     =  record.time
+            scene    =  record.scene
+            people   =  record.people
+            tag      =  record.tag
+        else:
+            subject = subject if subject else None
+            time = time if time else timeutils.isodatetime()
+            scene = scene if scene else self.lastScene()
+            people = people if people else ''
+            tag = tag if tag else ''
+
+        requests = []
+        # arguments: name, default, datatype, reader, desc
+        requests.append(self.makeOneRequest('subject', subject, str, None, 'subject'))
+        requests.append(self.makeOneRequest('time',    time,    str, None, 'time'))
+        requests.append(self.makeOneRequest('scene',   scene,   str, None, 'scene'))
+        requests.append(self.makeOneRequest('people',  people,  str, None, 'people'))
+        requests.append(self.makeOneRequest('tag',     tag,     str, None, 'tag'))
+        return requests
+
+    def makeLogEntry(self, *junk, **args):
+        """ Make a LogRecord instance interactively
+        """
+        data     =  args.pop('data')
+        requests = self.makeRequests(**args)
+        i        = interact.readMany(requests)
+        subject  =  i['subject']
+        time     =  i['time']
+        scene    =  i['scene']
+        people   =  i['people']
+        tag      =  i['tag']
+        if data:
+            data = data.encode()
+        data   = editContent(data).decode()
+        record = LogRecord(subject, time, scene, people, tag, data)
+        return record
+
+
+def add(args):
+    """ Add a log
+    Subject must be provided, all others are optional.
+    If data is provided, run in non-interactive mode,
+    if stdin is not a tty, run in non-interactive mode,
+    otherwise, collect information interactively.
+    """
+    tag = time = scene = people = subject = data = ''
+    interactive = True
+    while len(args) >= 2:
+        key = args.pop(0)
+        if key == '-g':
+            tag = args.pop(0)
+        elif key == '-t':
+            time = args.pop(0)
+        elif key == '-c':
+            scene = args.pop(0)
+        elif key == '-p':
+            people = args.pop(0)
+        elif key == '-s':
+            subject = args.pop(0)
+        elif key == '-d':
+            data = args.pop(0)
+            data = data.rstrip('\n') + '\n'
+    assert (subject != None and subject != ''), "invalid subject"
+    if data:        # data provided
+        interactive = False
+    elif not os.isatty(sys.stdin.fileno()):
+        interactive = False
+        data = sys.stdin.read()
+    logger = Log()
+    logger.add(subject, time, scene, people, tag, data, interactive)
+
+
+def help(ofile=sys.stdout):
+    bname = os.path.basename(sys.argv[0])
+    msg =  "Usage:\n"
+    msg += "%s add -s subject\n" % bname
+    msg += "cmd | %s add -s subject\n" % bname
+    msg += "%s add -s subject -d data\n" % bname
+    msg += "%s add -g tag -t time -c scene -p people -s subject -d data" % bname
+    print(msg)
+
+
+if __name__ == '__main__':
+    try:
+        cmd = sys.argv[1]
+    except IndexError:
+        help(ofile=sys.stderr)
+        exit(1)
+
+    try:
+        if cmd == 'add':
+            add(sys.argv[2:])
+    except AssertionError:
+        help(ofile=sys.stderr)
+        exit(1)
