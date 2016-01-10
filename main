@@ -6,6 +6,7 @@
 
 import sys, os
 import base64
+from subprocess import Popen, PIPE
 
 prog_path = os.path.realpath(__file__)
 prog_dir  = os.path.dirname(prog_path)
@@ -72,6 +73,55 @@ class Record:
 class Git:
     """ Git related operations
     """
+    def __init__(self, gitDir=None, gitWorkTree=None):
+        if gitWorkTree is None:
+            gitWorkTree = data_dir
+        if gitDir is None:
+            gitDir = os.path.join(gitWorkTree, '.git')
+        self.gitWorkTree = gitWorkTree
+        self.gitDir      = gitDir
+        if not os.path.exists(gitDir):
+            self.init()
+
+    def commit(self, path, title):
+        """ Add the file of path and create a commit
+        """
+        cmd = ['git', 'add', path]
+        res = self.runCmd(cmd)
+        if not res[0]:
+            return False
+        cmd = ['git', 'commit', '-m', title]
+        self.runCmd(cmd)
+
+    def init(self):
+        """ Initialize a git repository
+        """
+        cmd = ['git', 'init']
+        self.runCmd(cmd)
+
+    def runCmd(self, cmd):
+        """ Setup environment and execute command
+        """
+        os.environ.putenv('GIT_WORK_TREE', self.gitWorkTree)
+        os.environ.putenv('GIT_DIR', self.gitDir)
+        res = self.get_status_byte_output(cmd)
+        if not res[0]:
+            print('git command failed:', file=sys.stderr)
+            print(res[2].decode(), file=sys.stderr, end='')
+        return res
+
+    def get_status_byte_output(self, cmd):
+        """ Run the cmd, return the stdout and stderr as
+        bytes objects, as well as the stat of the cmd
+        (True or False), cmd is a list.
+        """
+        p       = Popen(cmd, stdout=PIPE, stderr=PIPE)
+        stdout, stderr  = p.communicate()
+        stat    = p.wait()
+        pStat   = (stat == 0)
+        res     = (pStat, stdout, stderr)
+        return res
+
     def last(self):
         """ Return the file content of the last commit
         it shall be one file only.
@@ -90,19 +140,20 @@ class LogRecord(Record):
         self.git    = Git()
 
     def save(self):
-        """ Save instance data to disk,
-        and create a git commit
+        """ Save instance data to disk, and create a git commit
         """
         timestamp  =  self.time
         dateEle    =  timeutils.isodate(timestamp).split('-')
-        dirName    =  os.path.join(data_dir, *dateEle)
+        relDirPath =  os.path.join(*dateEle)
+        absDirPath =  os.path.join(data_dir, relDirPath)
         fileName   =  self.genName(timestamp)
-        filePath   =  os.path.join(dirName, fileName)
-        os.makedirs(dirName, exist_ok=True)
+        filePath   =  os.path.join(absDirPath, fileName)
+        os.makedirs(absDirPath, exist_ok=True)
         self.engine.save(self, filePath)
-        #
-        # create a git commit here
-        #
+
+        relPath    =  os.path.join(relDirPath, fileName)
+        msgTitle   =  timeutils.isodatetime(self.time)
+        self.git.commit(relPath, msgTitle)
 
     def genName(self, timestamp):
         """ Generate a random file name base on the timestamp
