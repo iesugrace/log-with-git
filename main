@@ -430,13 +430,69 @@ def add(args):
     logger.add(subject, time, scene, people, tag, data, interactive)
 
 
+def _list(args):
+    """ List log summary
+
+    Can match log entries by time, or by regular expression.
+
+    Time format:
+        today: the day when the command runs
+        one or two digit number: a day of a month (1, 12)
+        one or two digit negative number: N-th day before (-1, -70)
+        four digit number: a day of the specific month  (0413, 0314)
+        four digit number: a year  (2015, 2016)
+        six digit number: a month of a year  (201512, 201601)
+        eight digit number: a day of a month of a year  (20160101)
+
+    Time contextual meaning:
+        a. pure number/word: from the first second of it,
+                             to the last second of it
+        b. colon separated : from the first second of the first,
+                             to the last second of the second
+        c. comma separated: combination of 'a' or 'b' types
+    """
+    assert len(args) > 0, "wrong arguments"
+    regexp     = None
+    timePoints = None
+    while args:
+        arg = args.pop(0)
+        if arg[:2] == '-S':     # regular expression
+            if len(arg) > 2:
+                regexp = arg[2:]
+            else:
+                assert len(args) > 0, "need argument for -S option"
+                regexp = args.pop(0)
+        else:   # time
+            assert validateTime(arg), ("invalid time: %s" % arg)
+            timePoints = parseTime(arg)
+    filterFunc = makeFilter(regexp, timePoints)
+
+def validateTime(timeStr):
+    """ Check if the time string is valid
+    """
+
+
+
 def help(ofile=sys.stdout):
     bname = os.path.basename(sys.argv[0])
-    msg =  "Usage:\n"
+    msg =  "Usage:\n\n"
     msg += "%s add -s subject\n" % bname
     msg += "cmd | %s add -s subject\n" % bname
     msg += "%s add -s subject -d data\n" % bname
-    msg += "%s add -g tag -t time -c scene -p people -s subject -d data" % bname
+    msg += "%s add -g tag -t time -c scene -p people -s subject -d data\n\n" % bname
+
+    msg += "%s list                     -- list all\n" % bname
+    msg += "%s list 2016                -- in 2016\n" % bname
+    msg += "%s list 201601              -- in Jan. 2016\n" % bname
+    msg += "%s list 20160107            -- on Jan. 7th 2016\n" % bname
+    msg += "%s list -7                  -- the 7th day before\n" % bname
+    msg += "%s list 3:5                 -- 3th through 5th this month\n" % bname
+    msg += "%s list -2:today            -- from the day before yesterday up to today\n" % bname
+    msg += "%s list 0703:0909           -- 3rd Jul. through 9th Sep. this year\n" % bname
+    msg += "%s list 20150101:today      -- from Jan. 1st 2015 up to today\n" % bname
+    msg += "%s list 20160101,3:5,-2,12  -- any day matches the comma separated list\n" % bname
+    msg += "%s list -Sregexp            -- regular expression match for any text fields\n" % bname
+    msg += "%s list 3:5 -Sregexp        -- regular expression match for any text fields\n" % bname
     print(msg)
 
 
@@ -450,6 +506,8 @@ if __name__ == '__main__':
     try:
         if cmd == 'add':
             add(sys.argv[2:])
+        elif cmd == 'list':
+            _list(sys.argv[2:])
     except AssertionError:
         help(ofile=sys.stderr)
         exit(1)
