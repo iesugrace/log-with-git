@@ -5,6 +5,7 @@
 # Description: a log tool with encrypted remote backup.
 
 import sys, os
+import base64
 
 prog_path = os.path.realpath(__file__)
 prog_dir  = os.path.dirname(prog_path)
@@ -26,12 +27,12 @@ class Record:
     scene    --  str
     people   --  str
     tag      --  str
-    data     --  bytes
+    data     --  str (maybe base64 text for binary data)
     """
     sep = ': '  # separator between key and value
 
     def __init__(self, subject, time=None, scene='',
-                        people='', tag='', data=b''):
+                        people='', tag='', data=''):
         time = time if time else timeutils.isodatetime()
         self.subject   =  subject
         self.time      =  timeutils.strtosecond(time)
@@ -42,16 +43,16 @@ class Record:
 
     def __repr__(self):
         text = self.__header()
-        try:
-            data = self.data.decode()
-        except UnicodeDecodeError:
+        if self.binary:
             data = "-->> Binary data <<--\n"
+        else:
+            data = self.data
         text = '%s\n\n%s' % (text, data)
         return text
 
     def __header(self):
         """ Construct the header of the Log
-        Return a str object, no trailing new-line.
+        Return a str object, no ending new-line.
         """
         text = 'Subject%s%s\nTime%s%s\nScene%s%s\nPeople%s%s\nTag%s%s'
         text = text % (self.sep, self.subject,
@@ -60,15 +61,6 @@ class Record:
                        self.sep, self.people,
                        self.sep, self.tag)
         return text
-
-    def bytes(self):
-        """ Similar to __repr__, but return a bytes,
-        and the 'data' field is presented intact.
-        """
-        text = self.__header()
-        res  = text.encode()
-        res += (b'\n\n' + self.data)
-        return res
 
     def elements(self):
         """ Return a dictionary containing
@@ -91,9 +83,11 @@ class LogRecord(Record):
     """ Log Record capable of Git operations
     OS aware operations defined here.
     """
-    def __init__(self, *pargs, **kargs):
-        Record.__init__(self, *pargs, **kargs)
-        self.git = Git()
+    def __init__(self, subject, time=None, scene='',
+                 people='', tag='', data='', binary=False):
+        Record.__init__(self, subject, time, scene, people, tag, data)
+        self.binary = binary
+        self.git    = Git()
 
     def save(self):
         """ Save instance data to disk,
@@ -105,7 +99,7 @@ class LogRecord(Record):
         fileName   =  self.genName(timestamp)
         filePath   =  os.path.join(dirName, fileName)
         os.makedirs(dirName, exist_ok=True)
-        open(filePath, 'wb').write(self.bytes())
+        self.engine.save(self, filePath)
         #
         # create a git commit here
         #
@@ -122,33 +116,117 @@ class LogRecord(Record):
         return '%s%s' % (timestamp, res)
 
     @staticmethod
-    def stripKey(line):
-        """ Cut off the key which is in the front of the line
+    def binToAsc(binData):
+        """ Convert the binary data into ASCII form,
+        using the registered storage engine.
         """
-        i = line.find(LogRecord.sep)
-        if i == -1:
-            return line
-        else:
-            return line[i+2]
+        return LogRecord.engine.b64encode(binData)
 
     @staticmethod
-    def parse(data):
-        """ Parse the raw log data, return a LogRecord instance,
-        'data' shall be a bytes object.
+    def load(path):
+        return LogRecord.engine.load(path)
+
+
+class XmlStorage:
+    """ XML storage engine for the record
+    """
+    @staticmethod
+    def b64encode(iData, lineLen=64):
+        """ Take the data which is a bytes,
+        encode it with base64, split the resulting
+        text into lines of 'lineLen', decode each
+        line (it was a bytes) to str, concatenate
+        them and return them as a whole long line.
         """
-        lines = data.split('\n')
+        lineLen = lineLen // 4 * 4  # make it times of 4
+        oData   = base64.b64encode(iData)
+        res     = []
+        while oData:
+            line, oData = oData[:lineLen], oData[lineLen:]
+            res.append(line.decode())
+        return '\n'.join(res)
+
+    @staticmethod
+    def b64decode(iData):
+        """ Take the str, decode it into binary
+        """
+        iData = iData.replace('\n', '')
+        return base64.b64decode(iData)
+
+    @staticmethod
+    def sourceToDom(code):
+        """ Parse the raw record data which is XML code,
+        return a Xml DOM object.
+        """
+        from xml.dom.minidom import parseString
+        return parseString(code)
+
+    @staticmethod
+    def load(path):
+        """ Load the content of the path,
+        parse it, and return a record instance.
+        """
         try:
-            subject = LogRecord.stripKey(lines[0].decode())
-            time    = timeutils.isostrtosecond(LogRecord.stripKey(lines[1].decode()))
-            scene   = LogRecord.stripKey(lines[2].decode())
-            people  = LogRecord.stripKey(lines[3].decode())
-            tag     = LogRecord.stripKey(lines[4].decode())
-            lines   = lines[6:] # one empty line between the data and header
-        except IndexError:  # invalid log data
+            code = open(path).read()
+            doc  = XmlStorage.sourceToDom(code)
+        except:
             return None
+        fields = {}
+        for node in doc.firstChild.childNodes:
+            if node.nodeType == node.ELEMENT_NODE:
+                name = node.localName
+                textNode = node.firstChild
+                data = textNode.data if textNode else ''
+                fields[name] = data
+        fields['binary'] = True if fields['binary'] == 'true' else False
+        return LogRecord(**fields)
+
+    @staticmethod
+    def createNode(root, nodeName, nodeText):
+        """ Add an element node with nodeText to the 'root' element
+        """
+        from xml.dom.minidom import Element, Text
+        ele = Element(nodeName)
+        text = Text()
+        text.data = nodeText
+        ele.appendChild(text)
+        root.appendChild(ele)
+
+    @staticmethod
+    def recordToSource(record):
+        """ Compose Xml source code from a record object
+        """
+        from xml.dom.minidom import Document, Text
+        import re
+        doc  = Document()
+        root = doc.createElement("log")
+        doc.appendChild(root)
+        XmlStorage.createNode(root, "subject", record.subject)
+        XmlStorage.createNode(root, "time", timeutils.isodatetime(record.time))
+        XmlStorage.createNode(root, "scene", record.scene)
+        XmlStorage.createNode(root, "people", record.people)
+        XmlStorage.createNode(root, "tag", record.tag)
+        if record.binary:
+            XmlStorage.createNode(root, "binary", "true")
         else:
-            data    = b'\n'.join(lines)
-            return LogRecord(subject, time, scene, people, tag, data)
+            XmlStorage.createNode(root, "binary", "false")
+        XmlStorage.createNode(root, "data", record.data)
+        xmlCode = doc.toprettyxml()
+        xmlCode = re.sub('\n(\s*\n)*', '\n', xmlCode)  # remove empty lines
+        xmlCode = re.sub('\t', '    ', xmlCode)     # replace tabs with spaces
+        return xmlCode
+
+    @staticmethod
+    def save(record, path):
+        """ Convert the record to Xml code,
+        and Write the code to the path.
+        """
+        code = XmlStorage.recordToSource(record)
+        open(path, 'w').write(code)
+
+
+# Register storage engine
+LogRecord.engine = XmlStorage
 
 
 class Log:
@@ -161,9 +239,9 @@ class Log:
     def lastScene(self):
         """ Fetch the recently used scene from the history
         """
-        raw = self.git.last()
-        if raw != None:
-            record = LogRecord.parse(raw)
+        path = self.git.last()
+        if path != None:
+            record = LogRecord.engine.load(path)
             if record != None:
                 return record.scene
         return ''
@@ -172,16 +250,37 @@ class Log:
                     people='', tag='', data=b'', interactive=False):
         """ Add a log record to the system
         When interactive is True, ask data for subject, time, scene,
-        people, tag, data from the use interactively, the provided
-        arguments are used as the default value for user's choice.
+        people, tag, and log data from the use interactively, the
+        provided arguments are used as the default value for user's
+        choice.
         """
+        if data:    # data provided, non-interactively
+            if self.isBinary(data):
+                binary = True
+                data   = LogRecord.binToAsc(data)
+            else:
+                binary = False
+                data = data.decode()
+        else:
+            binary = False
+
         if interactive:
-            record = self.makeLogEntry(subject=subject, time=time,
-                     scene=scene, people=people, tag=tag, data=data)
+            record = self.makeLogEntry(subject=subject, time=time, scene=scene,
+                        people=people, tag=tag, data=data, binary=binary)
         else:
             assert (subject != None and subject != ''), "invalid subject"
-            record = LogRecord(subject, time, scene, people, tag, data)
+            record = LogRecord(subject, time, scene, people, tag, data, binary)
         record.save()
+
+    def isBinary(self, data):
+        """ Deem to be binary data if failed to decode with utf8
+        """
+        try:
+            data.decode('utf8')
+        except UnicodeDecodeError:
+            return True
+        else:
+            return False
 
     def makeOneRequest(self, name, default, datatype, reader, desc):
         """ Create a request entry, used to interactively collect
@@ -226,9 +325,12 @@ class Log:
 
     def makeLogEntry(self, *junk, **args):
         """ Make a LogRecord instance interactively
-        'data' in the args must be a bytes.
+        'data' in the args must be a bytes which can
+        be decoded using utf8, binary data that is
+        not utf8 encoded, is not applicable.
         """
         data     =  args.pop('data')
+        binary   =  args.pop('binary')
         requests = self.makeRequests(**args)
         i        = interact.readMany(requests)
         subject  =  i['subject']
@@ -237,7 +339,7 @@ class Log:
         people   =  i['people']
         tag      =  i['tag']
         data   = editContent(data).decode()
-        record = LogRecord(subject, time, scene, people, tag, data)
+        record = LogRecord(subject, time, scene, people, tag, data, binary)
         return record
 
 
@@ -264,7 +366,7 @@ def add(args):
             subject = args.pop(0)
         elif key == '-d':
             data = args.pop(0)
-            data = data.rstrip('\n') + '\n'
+            data = data.rstrip('\n')    # remove all ending new-lines
     assert (subject != None and subject != ''), "invalid subject"
     if data:        # data provided
         interactive = False
