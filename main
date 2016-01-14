@@ -6,6 +6,7 @@
 
 import sys, os
 import base64
+import re
 from subprocess import Popen, PIPE
 
 prog_path = os.path.realpath(__file__)
@@ -438,7 +439,7 @@ def _list(args):
     Time format:
         today: the day when the command runs
         one or two digit number: a day of a month (1, 12)
-        one or two digit negative number: N-th day before (-1, -70)
+        one or two digit negative number: N-th day ago (-1, -70)
         four digit number: a day of the specific month  (0413, 0314)
         four digit number: a year  (2015, 2016)
         six digit number: a month of a year  (201512, 201601)
@@ -448,7 +449,8 @@ def _list(args):
         a. pure number/word: from the first second of it,
                              to the last second of it
         b. colon separated : from the first second of the first,
-                             to the last second of the second
+                             to the last second of the second,
+                             'today' next to the colon can be omitted.
         c. comma separated: combination of 'a' or 'b' types
     """
     assert len(args) > 0, "wrong arguments"
@@ -467,10 +469,22 @@ def _list(args):
             timePoints = parseTime(arg)
     filterFunc = makeFilter(regexp, timePoints)
 
+
 def validateTime(timeStr):
     """ Check if the time string is valid
     """
+    if timeStr == 'today':
+        return True
 
+    l1_parts = timeStr.split(',')
+    for l1_part in l1_parts:
+        l2_parts = l1_part.split(':')
+        for x in l2_parts:
+            # empty means 'today'
+            regexp = '^(today|-?[0-9]{1,2}|[0-9]{4}|[0-9]{6}|[0-9]{8})?$'
+            if re.search(regexp, x) is None:
+                return False
+    return True
 
 
 def help(ofile=sys.stdout):
@@ -488,6 +502,7 @@ def help(ofile=sys.stdout):
     msg += "%s list -7                  -- the 7th day before\n" % bname
     msg += "%s list 3:5                 -- 3th through 5th this month\n" % bname
     msg += "%s list -2:today            -- from the day before yesterday up to today\n" % bname
+    msg += "%s list -2:                 -- from the day before yesterday up to today\n" % bname
     msg += "%s list 0703:0909           -- 3rd Jul. through 9th Sep. this year\n" % bname
     msg += "%s list 20150101:today      -- from Jan. 1st 2015 up to today\n" % bname
     msg += "%s list 20160101,3:5,-2,12  -- any day matches the comma separated list\n" % bname
