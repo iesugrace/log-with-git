@@ -523,6 +523,7 @@ if __name__ == '__main__':
             add(sys.argv[2:])
         elif cmd == 'list':
             _list(sys.argv[2:])
-    except AssertionError:
+    except AssertionError as e:
+        print(e, file=sys.stderr)
         help(ofile=sys.stderr)
         exit(1)
