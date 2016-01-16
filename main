@@ -262,29 +262,22 @@ class Log:
                 return record.scene
         return ''
 
-    def add(self, subject=None, time=None, scene='',
-                    people='', tag='', data=b'', interactive=False):
+    def add(self, subject='', time=None, scene='', people='',
+            tag='', data=b'', binary=False, interactive=False):
         """ Add a log record to the system
         When interactive is True, ask data for subject, time, scene,
         people, tag, and log data from the use interactively, the
         provided arguments are used as the default value for user's
         choice.
         """
-        if data:    # data provided, non-interactively
-            if self.isBinary(data):
-                binary = True
-                data   = LogRecord.binToAsc(data)
-            else:
-                binary = False
-                data = data.decode()
-        else:
-            binary = False
-
         if interactive:
-            record = self.makeLogEntry(subject=subject, time=time, scene=scene,
-                        people=people, tag=tag, data=data, binary=binary)
+            record = self.makeLogEntry(subject=subject, time=time,
+                                       scene=scene, people=people,
+                                       tag=tag, data=data, binary=binary)
         else:
             assert (subject != None and subject != ''), "invalid subject"
+            if not binary:
+                data = data.decode()
             record = LogRecord(subject, time, scene, people, tag, data, binary)
         record.save()
 
@@ -302,19 +295,17 @@ class Log:
         return dict(name=name, prompt=prompt, datatype=datatype,
                     default=default, reader=actual_reader)
 
-    def makeRequests(self, *, record=None, subject=None, time=None,
+    def makeRequests(self, *, record=None, time=None,
                     scene=None, people=None, tag=None):
         """ Create the necessary requests data for collecting
         information for a Record from the user interactively.
         """
         if record:      # a LogRecord instance provided
-            subject  =  record.subject
             time     =  record.time
             scene    =  record.scene
             people   =  record.people
             tag      =  record.tag
         else:
-            subject = subject if subject else None
             time = time if time else timeutils.isodatetime()
             scene = scene if scene else self.lastScene()
             people = people if people else ''
@@ -322,7 +313,6 @@ class Log:
 
         requests = []
         # arguments: name, default, datatype, reader, desc
-        requests.append(self.makeOneRequest('subject', subject, str, None, 'subject'))
         requests.append(self.makeOneRequest('time',    time,    str, None, 'time'))
         requests.append(self.makeOneRequest('scene',   scene,   str, None, 'scene'))
         requests.append(self.makeOneRequest('people',  people,  str, None, 'people'))
@@ -335,18 +325,38 @@ class Log:
         be decoded using utf8, binary data that is
         not utf8 encoded, is not applicable.
         """
-        data     =  args.pop('data')
-        binary   =  args.pop('binary')
+        data     = args.pop('data')
+        binary   = args.pop('binary')
+        subject  = args.pop('subject')
+
+        # read subject and data from editor
+        if binary:
+            iData =  b'\n# Binary data is provided, therefore only the first\n'
+            iData += b'# line will be used for subject, empty message aborts.\n'
+        elif subject:
+            iData = subject.encode()
+            if data:
+                iData += b'\n\n' + data
+        else:
+            iData = b''
+        oData    = editContent(iData).decode()
+        msgLines = oData.split('\n\n')
+        subject  = msgLines.pop(0).strip()
+        if not binary:  # accept data from editor only for non-binary
+            data = '\n\n'.join(msgLines)
+
+        # empty subject, abort
+        assert subject != '', "aborting due to empty subject"
+
+        # read other info
         requests = self.makeRequests(**args)
         i        = interact.readMany(requests)
-        subject  =  i['subject']
         time     =  i['time']
         scene    =  i['scene']
         people   =  i['people']
         tag      =  i['tag']
-        data   = editContent(data).decode()
-        record = LogRecord(subject, time, scene, people, tag, data, binary)
-        return record
+
+        return LogRecord(subject, time, scene, people, tag, data, binary)
 
     def collectLogs(self, filter=None):
         """ Walk through all log records, collect those
@@ -375,13 +385,23 @@ class Log:
 
 def add(args):
     """ Add a log
-    Subject must be provided, all others are optional.
-    If data is provided, run in non-interactive mode,
-    if stdin is not a tty, run in non-interactive mode,
-    otherwise, collect information interactively.
+    Subject is required, data is not. If message provided,
+    all lines before an empty line will serve as the subject,
+    and the rest as the data. If the subject or the data is
+    not available from the argument, then read from the
+    stdin if the stdin is not a tty. If the data from stdin
+    can not be correctly decoded (binary) to provide the
+    missing subject, enter interactive mode and open up an
+    editor to collect information.
+
+    Priority of the source of subject and data, descending:
+
+        cmdline arguments --> stdin --> editor
+
     """
-    tag = time = scene = people = subject = data = ''
-    interactive = True
+    tag = time = scene = people = message = subject = ''
+    data = b''
+    binary = False
     while len(args) >= 2:
         key = args.pop(0)
         if key == '-g':
@@ -392,21 +412,31 @@ def add(args):
             scene = args.pop(0)
         elif key == '-p':
             people = args.pop(0)
-        elif key == '-s':
-            subject = args.pop(0)
-        elif key == '-d':
-            data = args.pop(0)
-            data = data.rstrip('\n')    # remove all ending new-lines
-    assert (subject != None and subject != ''), "invalid subject"
-    if data:        # data provided
-        interactive = False
-        data = data.encode()
-    elif not os.isatty(sys.stdin.fileno()):
-        interactive = False
+        elif key == '-m':
+            message  = args.pop(0)
+    # subject and data from command line
+    if message:
+        msgLines = message.rstrip('\n').split('\n\n')
+        subject  = msgLines.pop(0)
+        data     = '\n\n'.join(msgLines).encode()
+
+    interactive = not subject
+    if interactive and not os.isatty(sys.stdin.fileno()):
+        raise lib.NotTerminalException("stdin is not a terminal")
+
+    # data from stdin
+    if not data and not os.isatty(sys.stdin.fileno()):
         stdin = os.fdopen(sys.stdin.fileno(), 'rb')
-        data = stdin.read()
-    logger = Log()
-    logger.add(subject, time, scene, people, tag, data, interactive)
+        iData = stdin.read()
+        if lib.isBinary(iData):
+            binary = True
+            data   = lib.binToAsc(iData).encode()
+        else:
+            binary = False
+            data   = iData
+
+    logger      = Log()
+    logger.add(subject, time, scene, people, tag, data, binary, interactive)
 
 
 def _list(args):
@@ -640,11 +670,14 @@ def makeFilter(timePoints, regexps, matchAll=False):
 def help(ofile=sys.stdout):
     bname = os.path.basename(sys.argv[0])
     msg =  "Usage:\n\n"
+    msg += "%s --help\n\n" % bname
+
     msg += "------- Adding -------\n"
-    msg += "%s add -s subject\n" % bname
-    msg += "cmd | %s add -s subject\n" % bname
-    msg += "%s add -s subject -d data\n" % bname
-    msg += "%s add -g tag -t time -c scene -p people -s subject -d data\n\n" % bname
+    msg += "%s add\n" % bname
+    msg += "%s add -m message\n" % bname
+    msg += "%s add -m message < file\n" % bname
+    msg += "pipe | %s add -m message\n" % bname
+    msg += "%s add -g tag -t time -c scene -p people -m message\n\n" % bname
 
     msg += "------- Listing -------\n"
     msg += "%s list                         -- list all\n" % bname
@@ -666,6 +699,10 @@ def help(ofile=sys.stdout):
 
 
 if __name__ == '__main__':
+    if '--help' in sys.argv:
+        help()
+        exit(0)
+
     try:
         cmd = sys.argv[1]
     except IndexError:
@@ -677,7 +714,7 @@ if __name__ == '__main__':
             add(sys.argv[2:])
         elif cmd == 'list':
             _list(sys.argv[2:])
-    except (AssertionError, lib.InvalidTimeException) as e:
+    except (AssertionError, lib.InvalidTimeException,
+            lib.NotTerminalException) as e:
         print(e, file=sys.stderr)
-        help(ofile=sys.stderr)
         exit(1)
