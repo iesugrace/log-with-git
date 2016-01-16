@@ -280,6 +280,7 @@ class Log:
     """
 
     def __init__(self):
+        os.makedirs(data_dir, exist_ok=True)
         self.git = Git()
 
     def lastScene(self):
@@ -495,6 +496,8 @@ def pageOut(records):
         subject = cFormat % subject
         return subject + text[pos:]
 
+    if not records:
+        return
     lastOne = records.pop()
     pager   = lib.Pager(['-XRF'])
     for record in records:
