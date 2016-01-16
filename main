@@ -33,7 +33,7 @@ class Record:
     tag      --  str
     data     --  str (maybe base64 text for binary data)
     """
-    sep = ': '  # separator between key and value
+    sep = ':'  # separator between key and value
 
     def __init__(self, subject, time=None, scene='',
                         people='', tag='', data=''):
@@ -58,13 +58,17 @@ class Record:
         """ Construct the header of the Log
         Return a str object, no ending new-line.
         """
-        text = 'Subject%s%s\nTime%s%s\nScene%s%s\nPeople%s%s\nTag%s%s'
-        text = text % (self.sep, self.subject,
-                       self.sep, timeutils.isodatetime(self.time),
-                       self.sep, self.scene,
-                       self.sep, self.people,
-                       self.sep, self.tag)
-        return text
+        keys   = ['Subject', 'Time', 'Scene', 'People', 'Tag']
+        keys   = [x + self.sep for x in keys]   # append the separator
+        values = [self.subject, timeutils.isodatetime(self.time),
+                        self.scene, self.people, self.tag]
+        maxlen = max([len(x) for x in keys])
+        fmt    = '%%%ds %%s\n' % maxlen
+        text   = ''
+        for k, v in zip(keys, values):
+            if v:
+                text += fmt % (k, v)
+        return text[:-1]    # remove the last new-line
 
     def elements(self):
         """ Return a dictionary containing
