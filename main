@@ -5,7 +5,6 @@
 # Description: a log tool with encrypted remote backup.
 
 import sys, os
-import base64
 import re
 import time
 from subprocess import Popen, PIPE
@@ -162,13 +161,6 @@ class LogRecord(Record):
         return '%s%s' % (timestamp, res)
 
     @staticmethod
-    def binToAsc(binData):
-        """ Convert the binary data into ASCII form,
-        using the registered storage engine.
-        """
-        return LogRecord.engine.b64encode(binData)
-
-    @staticmethod
     def load(path):
         return LogRecord.engine.load(path)
 
@@ -176,29 +168,6 @@ class LogRecord(Record):
 class XmlStorage:
     """ XML storage engine for the record
     """
-    @staticmethod
-    def b64encode(iData, lineLen=64):
-        """ Take the data which is a bytes,
-        encode it with base64, split the resulting
-        text into lines of 'lineLen', decode each
-        line (it was a bytes) to str, concatenate
-        them and return them as a whole long line.
-        """
-        lineLen = lineLen // 4 * 4  # make it times of 4
-        oData   = base64.b64encode(iData)
-        res     = []
-        while oData:
-            line, oData = oData[:lineLen], oData[lineLen:]
-            res.append(line.decode())
-        return '\n'.join(res)
-
-    @staticmethod
-    def b64decode(iData):
-        """ Take the str, decode it into binary
-        """
-        iData = iData.replace('\n', '')
-        return base64.b64decode(iData)
-
     @staticmethod
     def sourceToDom(code):
         """ Parse the raw record data which is XML code,
@@ -318,16 +287,6 @@ class Log:
             assert (subject != None and subject != ''), "invalid subject"
             record = LogRecord(subject, time, scene, people, tag, data, binary)
         record.save()
-
-    def isBinary(self, data):
-        """ Deem to be binary data if failed to decode with utf8
-        """
-        try:
-            data.decode('utf8')
-        except UnicodeDecodeError:
-            return True
-        else:
-            return False
 
     def makeOneRequest(self, name, default, datatype, reader, desc):
         """ Create a request entry, used to interactively collect
