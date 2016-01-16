@@ -17,6 +17,7 @@ sys.path.insert(0, lib_dir)
 from common import editContent
 import interact
 import timeutils
+import lib
 
 data_dir = os.path.join(prog_dir, 'data')
 
@@ -105,22 +106,10 @@ class Git:
         """
         os.environ.putenv('GIT_WORK_TREE', self.gitWorkTree)
         os.environ.putenv('GIT_DIR', self.gitDir)
-        res = self.get_status_byte_output(cmd)
+        res = lib.get_status_byte_output(cmd)
         if not res[0]:
             print('git command failed:', file=sys.stderr)
             print(res[2].decode(), file=sys.stderr, end='')
-        return res
-
-    def get_status_byte_output(self, cmd):
-        """ Run the cmd, return the stdout and stderr as
-        bytes objects, as well as the stat of the cmd
-        (True or False), cmd is a list.
-        """
-        p       = Popen(cmd, stdout=PIPE, stderr=PIPE)
-        stdout, stderr  = p.communicate()
-        stat    = p.wait()
-        pStat   = (stat == 0)
-        res     = (pStat, stdout, stderr)
         return res
 
     def last(self):
