@@ -47,10 +47,11 @@ class Record:
     def __repr__(self):
         text = self.__header()
         if self.binary:
-            data = "-->> Binary data <<--\n"
+            data = "-->> Binary data <<--"
         else:
             data = self.data
-        text = '%s\n\n%s' % (text, data)
+        if data:
+            text = '%s\n\n%s' % (text, data.rstrip('\n'))
         return text
 
     def __header(self):
