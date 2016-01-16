@@ -7,6 +7,7 @@
 import sys, os
 import base64
 import re
+import time
 from subprocess import Popen, PIPE
 
 prog_path = os.path.realpath(__file__)
@@ -383,6 +384,30 @@ class Log:
         record = LogRecord(subject, time, scene, people, tag, data, binary)
         return record
 
+    def collectLogs(self, filter=None):
+        """ Walk through all log records, collect those
+        that passed the filter function matching. Return
+        a list of LogRecord instances.
+        """
+        if not filter:
+            filter = lambda record: True
+
+        cmd = ['find', data_dir, '-name', '.git', '-prune', '-o', '-type', 'f', '-print0']
+        res = lib.get_status_byte_output(cmd)
+        if not res[0]:
+            print('find command failed:', file=sys.stderr)
+            print(res[2].decode(), file=sys.stderr, end='')
+            return []
+
+        lines = res[1].split(b'\x00')[:-1]   # remove the last empty one
+        paths = [x.decode() for x in lines]
+        records = []
+        for path in paths:
+            record = LogRecord.load(path)
+            if filter(record):
+                records.append(record)
+        return records
+
 
 def add(args):
     """ Add a log
@@ -425,16 +450,16 @@ def _list(args):
 
     Can match log entries by time, or by regular expression.
 
-    Time format:
+    Time format (implemented in compreDay):
         today: the day when the command runs
+        negative number: N-th day ago (-1, -70)
         one or two digit number: a day of a month (1, 12)
-        one or two digit negative number: N-th day ago (-1, -70)
         four digit number: a day of the specific month  (0413, 0314)
         four digit number: a year  (2015, 2016)
         six digit number: a month of a year  (201512, 201601)
         eight digit number: a day of a month of a year  (20160101)
 
-    Time contextual meaning:
+    Time contextual meaning (implemented in parseTime):
         a. pure number/word: from the first second of it,
                              to the last second of it
         b. colon separated : from the first second of the first,
@@ -442,61 +467,235 @@ def _list(args):
                              'today' next to the colon can be omitted.
         c. comma separated: combination of 'a' or 'b' types
     """
-    assert len(args) > 0, "wrong arguments"
-    regexp     = None
-    timePoints = None
+    if len(args) == 0:  # list all records
+        filterFunc = lambda record: True
+    else:
+        filterFunc = procArgs(args)
+    logger  = Log()
+    records = logger.collectLogs(filterFunc)
+    records = sorted(records, key=lambda x: x.time, reverse=True)
+    pageOut(records)
+
+
+def pageOut(records):
+    """ Apply color to the text, pipe the
+    text to a pager, for a better viewing.
+    """
+    def colorize(record):
+        """ Render the first line
+        """
+        text    = str(record)
+        pos     = text.find('\n')
+        subject = text[:pos]
+        cFormat = '\033[0;33m%s\033[0m'
+        subject = cFormat % subject
+        return subject + text[pos:]
+
+    lastOne = records.pop()
+    pager   = lib.Pager(['-XRF'])
+    for record in records:
+        pager.write(colorize(record), '\n\n', isBytes=False)
+    pager.write(colorize(lastOne), '\n', isBytes=False)
+    pager.go()
+
+
+def procArgs(args):
+    """ Process the arguments, return a filter function.
+    """
+    regexps    = []
+    matchAll   = False
+    timePoints = []
     while args:
         arg = args.pop(0)
         if arg[:2] == '-S':     # regular expression
             if len(arg) > 2:
-                regexp = arg[2:]
+                regexps.append(arg[2:])
             else:
                 assert len(args) > 0, "need argument for -S option"
-                regexp = args.pop(0)
+                regexps.append(args.pop(0))
+        elif arg == '--all-match':  # affects the RE evaluation
+            matchAll = True
         else:   # time
             assert validateTime(arg), ("invalid time: %s" % arg)
-            timePoints = parseTime(arg)
-    filterFunc = makeFilter(regexp, timePoints)
+            timePoints.extend(parseTime(arg))
+    return makeFilter(timePoints, regexps, matchAll)
 
 
 def validateTime(timeStr):
-    """ Check if the time string is valid
+    """ Check the time string format
+    Only check the textual format, not the meaning
+    of the time string, therefore 20160230 is valid.
     """
     if timeStr == 'today':
         return True
 
-    l1_parts = timeStr.split(',')
-    for l1_part in l1_parts:
-        l2_parts = l1_part.split(':')
-        for x in l2_parts:
+    lev1_parts = timeStr.split(',')
+    for lev1_part in lev1_parts:
+        lev2_parts = lev1_part.split(':')
+        for x in lev2_parts:
             # empty means 'today'
-            regexp = '^(today|-?[0-9]{1,2}|[0-9]{4}|[0-9]{6}|[0-9]{8})?$'
+            regexp = '^(today|-[0-9]+|[0-9]{1,2}|[0-9]{4}|[0-9]{6}|[0-9]{8})?$'
             if re.search(regexp, x) is None:
                 return False
     return True
 
 
+def parseTime(timeStr):
+    """ Parse the time string, return a list of lists,
+    every inner list represents a period of time between
+    two points, the relationship between all inner lists
+    is OR, not AND.
+    """
+    if timeStr == 'today':
+        return [todayPeriod()]
+
+    allPairs   = []
+    lev1_parts = timeStr.split(',')
+    for lev1_part in lev1_parts:
+        lev2_parts = lev1_part.split(':')
+        if len(lev2_parts) == 2: # start time and end time
+            firstSecond, junk = compreTime(lev2_parts[0])
+            junk, lastSecond  = compreTime(lev2_parts[1])
+            allPairs.append([firstSecond, lastSecond])
+        else:   # one time
+            pair = compreTime(lev2_parts[0])
+            allPairs.append(pair)
+    return allPairs
+
+
+def todayPeriod():
+    """ Return the first and the last seconds of today
+    """
+    return dayPeriod()
+
+
+def dayPeriod(ts=None):
+    """ Return the first and the last seconds
+    of a day, 'ts' is a time.struct_time object,
+    if omitted, assume the current time.
+    """
+    if ts is None:
+        ts = time.localtime()
+    ts1 = time.strptime('%d%02d%02d' % ts[:3], '%Y%m%d')
+    firstSecond = int(time.mktime(ts1))
+    timeStr = '%d%02d%02d%02d%02d%02d' % (ts[:3] + (23, 59, 59))
+    ts2 = time.strptime(timeStr, '%Y%m%d%H%M%S')
+    lastSecond  = int(time.mktime(ts2))
+    return [firstSecond, lastSecond]
+
+
+def compreTime(text):
+    """ Distinguish between year and other
+    time format, call compreYear and compreDay
+    accordingly. Empty string means 'today'.
+    """
+    if not text:
+        return todayPeriod()
+    if len(text) == 4 and text[:2] == '20':
+        return compreYear(text)
+    else:
+        return compreDay(text)
+
+
+def compreYear(text):
+    """ Take the given number string as a year, return
+    the first second and the last second of the year.
+    """
+    firstDay = time.strptime(text, '%Y')
+    lastDay  = time.strptime('%s%s%s' % (text, '12', '31'), '%Y%m%d')
+    firstSecond, junk = dayPeriod(firstDay)
+    junk, lastSecond  = dayPeriod(lastDay)
+    return [firstSecond, lastSecond]
+
+
+def compreDay(text):
+    """ Parse the given number string, return the
+    first second and the last second of the day.
+    """
+    l = len(text)
+
+    try:
+        if text[0] == '-':          # negative day
+            days = int(text)
+            second = time.time() + 86400 * days
+            res = time.localtime(second)
+        elif 1 <= l <= 2:           # a day of the current month
+            y, m = time.localtime()[:2]
+            d = int(text)
+            res = time.strptime('%s%02d%02d' % (y, m, d), '%Y%m%d')
+        elif l == 4:                # day of a specific month
+            y = time.localtime()[0]
+            res = time.strptime('%s%s' % (y, text), '%Y%m%d')
+        elif l == 6:                # month of a specific year
+            res = time.strptime(text, '%Y%m')
+        elif l == 8:                # a day of a month of a year
+            res = time.strptime(text, '%Y%m%d')
+    except:
+        raise lib.InvalidTimeException("invalid time: %s" % text)
+    return dayPeriod(res)
+
+
+def makeFilter(timePoints, regexps, matchAll=False):
+    """ Create a filter function for filtering
+    the record with the given regular expression,
+    and the time points. The filter function
+    expects a LogRecord instance object.
+    """
+    def logFilter(record, regexps=regexps,
+                timePoints=timePoints, matchAll=matchAll):
+        """ timeMatch is True if the time of the record is
+        within any pair of the timePoints, regMatch is True
+        if any of these fields of a record match the given
+        regular expression: subject, scene, people, tag,
+        and data if it's not of binary form. Return True
+        only when both timeMatch and regMatch are True.
+        """
+        timeMatch = regMatch = True
+        if timePoints:
+            t = record.time
+            x = [True for t1, t2 in timePoints if t1 <= t <= t2]
+            timeMatch = bool(x)
+        if regexps:
+            g = [record.subject, record.scene, record.people, record.tag]
+            if not record.binary:
+                g.append(record.data)
+
+            if matchAll:
+                matcher = lambda ps, f: len([1 for p in ps if re.search(p, f)]) == len(ps)
+            else:
+                matcher = lambda ps, f: bool([1 for p in ps if re.search(p, f)])
+            x = [True for f in g if matcher(regexps, f)]
+            regMatch = bool(x)
+        return timeMatch and regMatch
+
+    return logFilter
+
+
 def help(ofile=sys.stdout):
     bname = os.path.basename(sys.argv[0])
     msg =  "Usage:\n\n"
+    msg += "------- Adding -------\n"
     msg += "%s add -s subject\n" % bname
     msg += "cmd | %s add -s subject\n" % bname
     msg += "%s add -s subject -d data\n" % bname
     msg += "%s add -g tag -t time -c scene -p people -s subject -d data\n\n" % bname
 
-    msg += "%s list                     -- list all\n" % bname
-    msg += "%s list 2016                -- in 2016\n" % bname
-    msg += "%s list 201601              -- in Jan. 2016\n" % bname
-    msg += "%s list 20160107            -- on Jan. 7th 2016\n" % bname
-    msg += "%s list -7                  -- the 7th day before\n" % bname
-    msg += "%s list 3:5                 -- 3th through 5th this month\n" % bname
-    msg += "%s list -2:today            -- from the day before yesterday up to today\n" % bname
-    msg += "%s list -2:                 -- from the day before yesterday up to today\n" % bname
-    msg += "%s list 0703:0909           -- 3rd Jul. through 9th Sep. this year\n" % bname
-    msg += "%s list 20150101:today      -- from Jan. 1st 2015 up to today\n" % bname
-    msg += "%s list 20160101,3:5,-2,12  -- any day matches the comma separated list\n" % bname
-    msg += "%s list -Sregexp            -- regular expression match for any text fields\n" % bname
-    msg += "%s list 3:5 -Sregexp        -- regular expression match for any text fields\n" % bname
+    msg += "------- Listing -------\n"
+    msg += "%s list                         -- list all\n" % bname
+    msg += "%s list 2016                    -- in 2016\n" % bname
+    msg += "%s list 201601                  -- in Jan. 2016\n" % bname
+    msg += "%s list 20160107                -- on Jan. 7th 2016\n" % bname
+    msg += "%s list -7                      -- the 7th day before\n" % bname
+    msg += "%s list 3:5                     -- 3th through 5th this month\n" % bname
+    msg += "%s list -2:today                -- from the day before yesterday up to today\n" % bname
+    msg += "%s list -2:                     -- from the day before yesterday up to today\n" % bname
+    msg += "%s list 0703:0909               -- 3rd Jul. through 9th Sep. this year\n" % bname
+    msg += "%s list 20150101:today          -- from Jan. 1st 2015 up to today\n" % bname
+    msg += "%s list 20160101,3:5,-2,12      -- any day matches the comma separated list\n" % bname
+    msg += "%s list -Sre                    -- regular expression match for any text fields\n" % bname
+    msg += "%s list -Sre -Sre               -- match any of the regular expression\n" % bname
+    msg += "%s list -Sre -Sre --all-match   -- match all of the regular expressions\n" % bname
+    msg += "%s list 3:5 -Sre                -- regular expression match for any text fields\n" % bname
     print(msg)
 
 
