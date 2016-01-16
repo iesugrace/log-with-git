@@ -715,7 +715,7 @@ if __name__ == '__main__':
             add(sys.argv[2:])
         elif cmd == 'list':
             _list(sys.argv[2:])
-    except AssertionError as e:
+    except (AssertionError, lib.InvalidTimeException) as e:
         print(e, file=sys.stderr)
         help(ofile=sys.stderr)
         exit(1)
