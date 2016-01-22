@@ -19,7 +19,20 @@ import interact
 import timeutils
 import lib
 
-data_dir = os.path.join(prog_dir, 'data')
+def getDataDir(prog_dir):
+    """ Set the data dir.
+    Use the environment variable 'DATA_DIR', if set
+    and is a directory, or is set but not yet exists;
+    defaults to the 'data' under the program directory.
+    """
+    val = os.getenv("DATA_DIR")
+    if val and (os.path.isdir(val) or not os.path.exists(val)):
+        res = val
+    else:
+        res = os.path.join(prog_dir, 'data')
+    return res
+
+data_dir = getDataDir(prog_dir)
 
 
 class Record:
