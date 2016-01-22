@@ -151,15 +151,17 @@ class LogRecord(Record):
         self.git.commit(relPath, msgTitle)
 
     def genName(self, timestamp):
-        """ Generate a random file name base on the timestamp
+        """ Generate a file name base on the timestamp,
+        and some random string, the result is a sha1 sum.
         """
-        import random
+        import random, hashlib
         s = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
         res = ''
         length = 10
         for i in range(length):
             res += random.choice(s)
-        return '%s%s' % (timestamp, res)
+        string = ('%s%s' % (timestamp, res)).encode()
+        return hashlib.sha1(string).hexdigest()
 
     @staticmethod
     def load(path):
