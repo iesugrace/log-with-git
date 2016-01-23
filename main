@@ -115,10 +115,10 @@ class Git:
         if not os.path.exists(gitDir):
             self.init()
 
-    def commit(self, path, message):
-        """ Add the file of path and create a commit
+    def commit(self, paths, message):
+        """ Add the files of paths and create a commit
         """
-        cmd = ['git', 'add', path]
+        cmd = ['git', 'add', '-A'] + paths
         res = self.runCmd(cmd)
         if not res[0]:
             return False
@@ -173,8 +173,8 @@ class LogRecord(Record):
         self.engine.save(self, filePath)
 
         relPath    =  os.path.join(relDirPath, fileName)
-        msgTitle   =  timeutils.isodatetime(self.time)
-        self.git.commit(relPath, msgTitle)
+        message    =  'Add log\n\n%s' % fileName
+        self.git.commit([relPath], message)
 
     def genName(self, timestamp):
         """ Generate a file name base on the timestamp,
