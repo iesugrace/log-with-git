@@ -115,14 +115,14 @@ class Git:
         if not os.path.exists(gitDir):
             self.init()
 
-    def commit(self, path, title):
+    def commit(self, path, message):
         """ Add the file of path and create a commit
         """
         cmd = ['git', 'add', path]
         res = self.runCmd(cmd)
         if not res[0]:
             return False
-        cmd = ['git', 'commit', '-m', title]
+        cmd = ['git', 'commit', '-m', message]
         self.runCmd(cmd)
 
     def init(self):
