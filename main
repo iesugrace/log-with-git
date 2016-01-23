@@ -19,20 +19,34 @@ import interact
 import timeutils
 import lib
 
-def getDataDir(prog_dir):
-    """ Set the data dir.
-    Use the environment variable 'DATA_DIR', if set
-    and is a directory, or is set but not yet exists;
-    defaults to the 'data' under the program directory.
-    """
-    val = os.getenv("DATA_DIR")
-    if val and (os.path.isdir(val) or not os.path.exists(val)):
-        res = val
-    else:
-        res = os.path.join(prog_dir, 'data')
-    return res
+# A global dictionary to hold all configs,
+# some classes reference this variable
+appConfigs = {}
 
-data_dir = getDataDir(prog_dir)
+class Config:
+    """ Process and store the user settings
+    """
+    defaultConfigName = '.logrc'
+
+    def __init__(self, path=None):
+        """ Rule for the dataDir:
+        1. exists and is a directory, or
+        2. not yet exists
+        """
+        if not path:
+            path = os.path.join(os.getenv('HOME'), self.defaultConfigName)
+        code       = open(path).read()
+        configs    = {}
+        exec(code, configs)
+        configs    = {k: v for k, v in configs.items() if k[0] != '_'}
+        self.data  = configs
+        dataDir    = configs.get('dataDir')
+        dataDirSet = False
+        if dataDir and (
+            os.path.isdir(dataDir) or
+            not os.path.exists(dataDir)):
+                dataDirSet = True
+        assert dataDirSet, "no appropriate data directory"
 
 
 class Record:
@@ -93,9 +107,7 @@ class Record:
 class Git:
     """ Git related operations
     """
-    def __init__(self, gitDir=None, gitWorkTree=None):
-        if gitWorkTree is None:
-            gitWorkTree = data_dir
+    def __init__(self, gitWorkTree, gitDir=None):
         if gitDir is None:
             gitDir = os.path.join(gitWorkTree, '.git')
         self.gitWorkTree = gitWorkTree
@@ -144,8 +156,9 @@ class LogRecord(Record):
     def __init__(self, subject, time=None, scene='',
                  people='', tag='', data='', binary=False):
         Record.__init__(self, subject, time, scene, people, tag, data)
-        self.binary = binary
-        self.git    = Git()
+        self.binary  = binary
+        self.dataDir = appConfigs['dataDir']
+        self.git     = Git(self.dataDir)
 
     def save(self):
         """ Save instance data to disk, and create a git commit
@@ -153,7 +166,7 @@ class LogRecord(Record):
         timestamp  =  self.time
         dateEle    =  timeutils.isodate(timestamp).split('-')
         relDirPath =  os.path.join(*dateEle)
-        absDirPath =  os.path.join(data_dir, relDirPath)
+        absDirPath =  os.path.join(self.dataDir, relDirPath)
         fileName   =  self.genName(timestamp)
         filePath   =  os.path.join(absDirPath, fileName)
         os.makedirs(absDirPath, exist_ok=True)
@@ -265,8 +278,9 @@ class Log:
     """
 
     def __init__(self):
-        os.makedirs(data_dir, exist_ok=True)
-        self.git = Git()
+        dataDir = appConfigs['dataDir']
+        os.makedirs(dataDir, exist_ok=True)
+        self.git = Git(dataDir)
 
     def lastScene(self):
         """ Fetch the recently used scene from the history
@@ -382,7 +396,8 @@ class Log:
         if not filter:
             filter = lambda record: True
 
-        cmd = ['find', data_dir, '-name', '.git', '-prune', '-o', '-type', 'f', '-print0']
+        dataDir = appConfigs['dataDir']
+        cmd = ['find', dataDir, '-name', '.git', '-prune', '-o', '-type', 'f', '-print0']
         res = lib.get_status_byte_output(cmd)
         if not res[0]:
             print('find command failed:', file=sys.stderr)
@@ -714,17 +729,41 @@ def help(ofile=sys.stdout):
     print(msg)
 
 
+def loadConfig():
+    if '-F' in sys.argv:
+        idx = sys.argv.index('-F')
+        sys.argv.pop(idx)
+        assert len(sys.argv) > idx, "need argument for -F option"
+        path = sys.argv.pop(idx)
+    else:
+        path = None
+
+    config = Config(path)
+    for k, v in config.data.items():
+        appConfigs[k] = v
+
+
 if __name__ == '__main__':
     if '--help' in sys.argv:
         help()
         exit(0)
 
+    # load config from file
+    try:
+        loadConfig()
+    except:
+        print(sys.exc_info()[1])
+        help(ofile=sys.stderr)
+        exit(1)
+
+    # what command?
     try:
         cmd = sys.argv[1]
     except IndexError:
         help(ofile=sys.stderr)
         exit(1)
 
+    # start to work
     try:
         if cmd == 'add':
             add(sys.argv[2:])
