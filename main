@@ -192,6 +192,24 @@ class LogRecord(Record):
         string = ('%s%s' % (timestamp, res)).encode()
         return hashlib.sha1(string).hexdigest()
 
+    def __eq__(self, log):
+        """ compare with another log, if are equal
+        """
+        return (self.people  == log.people and
+                self.time    == log.time   and
+                self.author  == log.author and
+                self.tag     == log.tag    and
+                self.binary  == log.binary and
+                self.scene   == log.scene  and
+                self.data    == log.data   and
+                self.data    == log.data   and
+                self.subject == log.subject)
+
+    def __ne__(self, log):
+        """ compare with another log, if are not equal
+        """
+        return not self.__eq__(log)
+
     @staticmethod
     def load(path):
         return LogRecord.engine.load(path)
@@ -455,6 +473,33 @@ class Log:
             bnames = [os.path.basename(x) for x in deletedPaths]
             message = 'Delete log\n\n%s' % '\n'.join(bnames)
             self.git.commit(deletedPaths, message)
+
+    def edit(self, id):
+        """ Edit the log of the given id
+        The edited log may be saved to a new directory
+        if its timestamp changed, in such case the old
+        log will be deleted.
+        """
+        paths        = self.allLogPaths()
+        changedFiles = []
+        for path in paths:
+            if os.path.basename(path).startswith(id):
+                oldRecord = LogRecord.load(path)
+                elements  = dict(oldRecord.elements())
+                oldPath   = elements.pop('path')
+                elements['data'] = elements['data'].encode()
+                elements['time'] = timeutils.isodatetime(elements['time'])
+                newRecord = self.makeLogEntry(**elements)
+                if newRecord != oldRecord:
+                    if newRecord.time != oldRecord.time:
+                        os.remove(oldPath)
+                        changedFiles.append(oldPath)
+                    fileName = os.path.basename(oldPath)
+                    newPath  = newRecord.save(fileName)
+                    changedFiles.append(newPath)
+                    message  =  'Change log\n\n%s' % fileName
+                    self.git.commit(changedFiles, message)
+                break
 
 
 def add(args):
@@ -773,6 +818,20 @@ def delete(args):
     logger.delete(ids, force=force)
 
 
+def edit(args):
+    """ Edit a log
+
+    If the time of the log been changed, move
+    the file of the log to the appropriate
+    new parent directory.
+    """
+    assert len(args) == 1, "wrong arguments"
+    id     = args[0]
+    assert id, "wrong arguments"
+    logger = Log()
+    logger.edit(id)
+
+
 def help(ofile=sys.stdout):
     bname = os.path.basename(sys.argv[0])
     msg =  "Usage:\n\n"
@@ -806,7 +865,10 @@ def help(ofile=sys.stdout):
     msg += "%s del 297aacc                  -- delete log whose id starts with 297aacc\n" % bname
     msg += "%s del 297aacc 5e0df2c          -- delete multiple logs\n" % bname
     msg += "%s del -f 297aacc               -- delete without confirmation\n" % bname
-    msg += "%s del -i list-of-file          -- get log IDs from a file\n" % bname
+    msg += "%s del -i list-of-file          -- get log IDs from a file\n\n" % bname
+
+    msg += "------- Editing -------\n"
+    msg += "%s edit 297aacc                 -- edit log whose id starts with 297aacc\n" % bname
     print(msg)
 
 
@@ -847,6 +909,8 @@ if __name__ == '__main__':
             add(sys.argv[2:])
         elif cmd == 'del':
             delete(sys.argv[2:])
+        elif cmd == 'edit':
+            edit(sys.argv[2:])
         elif cmd == 'list':
             _list(sys.argv[2:])
         else:
