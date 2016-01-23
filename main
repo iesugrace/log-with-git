@@ -824,22 +824,24 @@ if __name__ == '__main__':
         help(ofile=sys.stderr)
         exit(1)
 
-    # what command?
-    try:
-        cmd = sys.argv[1]
-    except IndexError:
-        help(ofile=sys.stderr)
-        exit(1)
-
     # start to work
     try:
+        cmd = sys.argv[1]
         if cmd == 'add':
             add(sys.argv[2:])
         elif cmd == 'del':
             delete(sys.argv[2:])
         elif cmd == 'list':
             _list(sys.argv[2:])
-    except (AssertionError, lib.InvalidTimeException,
+        else:
+            raise lib.InvalidCmdException('unrecognized command: %s' % cmd)
+    except IndexError:
+        print('argument error', file=sys.stderr)
+        help(ofile=sys.stderr)
+        exit(1)
+    except (AssertionError,
+            lib.InvalidTimeException,
+            lib.InvalidCmdException,
             lib.NotTerminalException) as e:
         print(e, file=sys.stderr)
         exit(1)

@@ -2,6 +2,7 @@ from subprocess import Popen, PIPE
 import base64
 
 class InvalidTimeException(Exception): pass
+class InvalidCmdException(Exception): pass
 class NotTerminalException(Exception): pass
 
 def get_status_byte_output(cmd):
