@@ -165,24 +165,19 @@ class LogRecord(Record):
         Record.__init__(self, subject, author, time,
                         scene, people, tag, data, path)
         self.binary      = binary
-        self.dataDir     = appConfigs['dataDir']
-        self.git         = Git(self.dataDir)
 
-    def save(self):
-        """ Save instance data to disk, and create a git commit
+    def save(self, fileName=None):
+        """ Save instance data to disk
         """
         timestamp  =  self.time
         dateEle    =  timeutils.isodate(timestamp).split('-')
-        relDirPath =  os.path.join(*dateEle)
-        absDirPath =  os.path.join(self.dataDir, relDirPath)
-        fileName   =  self.genName(timestamp)
+        absDirPath =  os.path.join(appConfigs['dataDir'], *dateEle)
+        if not fileName:
+            fileName = self.genName(timestamp)
         filePath   =  os.path.join(absDirPath, fileName)
         os.makedirs(absDirPath, exist_ok=True)
         self.engine.save(self, filePath)
-
-        relPath    =  os.path.join(relDirPath, fileName)
-        message    =  'Add log\n\n%s' % fileName
-        self.git.commit([relPath], message)
+        return filePath
 
     def genName(self, timestamp):
         """ Generate a file name base on the timestamp,
@@ -323,7 +318,10 @@ class Log:
                 data = data.decode()
             record = LogRecord(subject, author, time, scene,
                                people, tag, data, binary)
-        record.save()
+        path  = record.save()
+        bname = os.path.basename(path)
+        message = 'Add log\n\n%s' % bname
+        self.git.commit([path], message)
 
     def makeOneRequest(self, name, default, datatype, reader, desc):
         """ Create a request entry, used to interactively collect
