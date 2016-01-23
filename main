@@ -388,30 +388,34 @@ class Log:
 
         return LogRecord(subject, time, scene, people, tag, data, binary)
 
-    def collectLogs(self, filter=None):
-        """ Walk through all log records, collect those
-        that passed the filter function matching. Return
-        a list of LogRecord instances.
+    def allLogPaths(self):
+        """ Return all log records' paths in the file
+        system, return a generator.
         """
-        if not filter:
-            filter = lambda record: True
-
         dataDir = appConfigs['dataDir']
         cmd = ['find', dataDir, '-name', '.git', '-prune', '-o', '-type', 'f', '-print0']
         res = lib.get_status_byte_output(cmd)
         if not res[0]:
             print('find command failed:', file=sys.stderr)
             print(res[2].decode(), file=sys.stderr, end='')
-            return []
+            return
 
         lines = res[1].split(b'\x00')[:-1]   # remove the last empty one
-        paths = [x.decode() for x in lines]
-        records = []
+        for path in lines:
+            yield path.decode()
+
+    def collectLogs(self, filter=None):
+        """ Walk through all log records, collect those
+        that passed the filter function matching. Return
+        a generator which yields LogRecord instances.
+        """
+        if not filter:
+            filter = lambda record: True
+        paths = self.allLogPaths()
         for path in paths:
             record = LogRecord.load(path)
             if filter(record):
-                records.append(record)
-        return records
+                yield record
 
 
 def add(args):
