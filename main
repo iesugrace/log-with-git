@@ -417,6 +417,32 @@ class Log:
             if filter(record):
                 yield record
 
+    def delete(self, ids, force=False):
+        """ Delete the logs whose id is in 'ids', confirm
+        before deleting if force is False, partial ID is
+        acceptable, so that 297aacc is equivalent of
+        297aacc3863171ed86ba89a2ea0e88f9c4d99d48.
+        """
+        paths = self.allLogPaths()
+        paths = [path for path in paths for id in ids
+                    if id and os.path.basename(path).startswith(id)]
+        deletedPaths = []
+        for path in paths:
+            bname  = os.path.basename(path)
+            if not force:
+                record = LogRecord.load(path)
+                msg = 'delete %s: %s? ' % (bname, record.subject)
+                ans = interact.readstr(msg, default='N')
+                if ans != 'y':
+                    continue
+            os.remove(path)
+            deletedPaths.append(path)
+            print('deleted %s' % bname)
+        if deletedPaths:
+            bnames = [os.path.basename(x) for x in deletedPaths]
+            message = 'Delete log\n\n%s' % '\n'.join(bnames)
+            self.git.commit(deletedPaths, message)
+
 
 def add(args):
     """ Add a log
@@ -702,6 +728,38 @@ def makeFilter(timePoints, regexps, matchAll=False):
     return logFilter
 
 
+def delete(args):
+    """ Delete logs
+
+    Identify logs by the ID, multiple IDs are accepted,
+    either from the command line, or from a file; the
+    file shall have one line for one ID.
+    """
+    ids   = []
+    ifile = None
+    force = False
+    while args:
+        arg = args.pop(0)
+        if arg[:2] == '-i':     # input file
+            if len(arg) > 2:
+                ifile = arg[2:]
+            else:
+                assert len(args) > 0, "need argument for -i option"
+                ifile = args.pop(0)
+        elif arg == '-f':
+            force = True
+        else:   # log ID
+            ids.append(arg)
+    if ifile:
+        lines = open(ifile).readlines()
+        lines = [x.rstrip() for x in lines if len(x) > 1]
+        ids.extend(lines)
+    assert ids, "no IDs provided"
+    ids    = set(ids)
+    logger = Log()
+    logger.delete(ids, force=force)
+
+
 def help(ofile=sys.stdout):
     bname = os.path.basename(sys.argv[0])
     msg =  "Usage:\n\n"
@@ -729,7 +787,13 @@ def help(ofile=sys.stdout):
     msg += "%s list -Sre                    -- regular expression match for any text fields\n" % bname
     msg += "%s list -Sre -Sre               -- match any of the regular expression\n" % bname
     msg += "%s list -Sre -Sre --all-match   -- match all of the regular expressions\n" % bname
-    msg += "%s list 3:5 -Sre                -- regular expression match for any text fields\n" % bname
+    msg += "%s list 3:5 -Sre                -- regular expression match for any text fields\n\n" % bname
+
+    msg += "------- Deleting -------\n"
+    msg += "%s del 297aacc                  -- delete log whose id starts with 297aacc\n" % bname
+    msg += "%s del 297aacc 5e0df2c          -- delete multiple logs\n" % bname
+    msg += "%s del -f 297aacc               -- delete without confirmation\n" % bname
+    msg += "%s del -i list-of-file          -- get log IDs from a file\n" % bname
     print(msg)
 
 
@@ -771,6 +835,8 @@ if __name__ == '__main__':
     try:
         if cmd == 'add':
             add(sys.argv[2:])
+        elif cmd == 'del':
+            delete(sys.argv[2:])
         elif cmd == 'list':
             _list(sys.argv[2:])
     except (AssertionError, lib.InvalidTimeException,
