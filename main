@@ -46,13 +46,16 @@ class Config:
             os.path.isdir(dataDir) or
             not os.path.exists(dataDir)):
                 dataDirSet = True
-        assert dataDirSet, "no appropriate data directory"
+        assert dataDirSet, "config: no appropriate data directory"
+        assert configs.get('authorName'), "config: author name not set"
+        assert configs.get('authorEmail'), "config: author email not set"
 
 
 class Record:
     """ Define the fields and methods of a record
     Fields and types:
     subject  --  str
+    author   --  str
     time     --  int
     scene    --  str
     people   --  str
@@ -61,18 +64,20 @@ class Record:
     """
     sep = ':'  # separator between key and value
 
-    def __init__(self, subject, time=None, scene='',
-                        people='', tag='', data=''):
+    def __init__(self, subject, author, time=None, scene='',
+                        people='', tag='', data='', path=None):
         time = time if time else timeutils.isodatetime()
         self.subject   =  subject
+        self.author    =  author
         self.time      =  timeutils.strtosecond(time)
         self.scene     =  scene
         self.people    =  people
         self.tag       =  tag
         self.data      =  data
+        self.path      =  path
 
     def __repr__(self):
-        text = self.__header()
+        text = '%s\n\n%s' % (self.__header(), self.subject)
         if self.binary:
             data = "-->> Binary data <<--"
         else:
@@ -85,17 +90,19 @@ class Record:
         """ Construct the header of the Log
         Return a str object, no ending new-line.
         """
-        keys   = ['Subject', 'Time', 'Scene', 'People', 'Tag']
+        keys   = ['Author', 'Time', 'Scene', 'People', 'Tag']
         keys   = [x + self.sep for x in keys]   # append the separator
-        values = [self.subject, timeutils.isodatetime(self.time),
+        values = [self.author, timeutils.isodatetime(self.time),
                         self.scene, self.people, self.tag]
         maxlen = max([len(x) for x in keys])
-        fmt    = '%%%ds %%s\n' % maxlen
+        fmt    = '%%-%ds %%s\n' % maxlen
         text   = ''
         for k, v in zip(keys, values):
             if v:
                 text += fmt % (k, v)
-        return text[:-1]    # remove the last new-line
+        id     = os.path.basename(self.path) if self.path else 'N/A'
+        text   = 'log %s\n%s' % (id, text[:-1])
+        return text     # remove the last new-line
 
     def elements(self):
         """ Return a dictionary containing
@@ -153,12 +160,13 @@ class LogRecord(Record):
     """ Log Record capable of Git operations
     OS aware operations defined here.
     """
-    def __init__(self, subject, time=None, scene='',
-                 people='', tag='', data='', binary=False):
-        Record.__init__(self, subject, time, scene, people, tag, data)
-        self.binary  = binary
-        self.dataDir = appConfigs['dataDir']
-        self.git     = Git(self.dataDir)
+    def __init__(self, subject, author, time=None, scene='', people='',
+                    tag='', data='', binary=False, path=None):
+        Record.__init__(self, subject, author, time,
+                        scene, people, tag, data, path)
+        self.binary      = binary
+        self.dataDir     = appConfigs['dataDir']
+        self.git         = Git(self.dataDir)
 
     def save(self):
         """ Save instance data to disk, and create a git commit
@@ -223,6 +231,7 @@ class XmlStorage:
                 data = textNode.data if textNode else ''
                 fields[name] = data
         fields['binary'] = True if fields['binary'] == 'true' else False
+        fields['path'] = path
         return LogRecord(**fields)
 
     @staticmethod
@@ -246,6 +255,7 @@ class XmlStorage:
         root = doc.createElement("log")
         doc.appendChild(root)
         XmlStorage.createNode(root, "subject", record.subject)
+        XmlStorage.createNode(root, "author", record.author)
         XmlStorage.createNode(root, "time", timeutils.isodatetime(record.time))
         XmlStorage.createNode(root, "scene", record.scene)
         XmlStorage.createNode(root, "people", record.people)
@@ -300,15 +310,19 @@ class Log:
         provided arguments are used as the default value for user's
         choice.
         """
+
+        author = '%s <%s>' % (appConfigs['authorName'],
+                              appConfigs['authorEmail'])
         if interactive:
-            record = self.makeLogEntry(subject=subject, time=time,
-                                       scene=scene, people=people,
+            record = self.makeLogEntry(subject=subject, author=author,
+                                       time=time, scene=scene, people=people,
                                        tag=tag, data=data, binary=binary)
         else:
             assert (subject != None and subject != ''), "invalid subject"
             if not binary:
                 data = data.decode()
-            record = LogRecord(subject, time, scene, people, tag, data, binary)
+            record = LogRecord(subject, author, time, scene,
+                               people, tag, data, binary)
         record.save()
 
     def makeOneRequest(self, name, default, datatype, reader, desc):
@@ -358,6 +372,7 @@ class Log:
         data     = args.pop('data')
         binary   = args.pop('binary')
         subject  = args.pop('subject')
+        author   = args.pop('author')
 
         # read subject and data from editor
         if binary:
@@ -386,7 +401,7 @@ class Log:
         people   =  i['people']
         tag      =  i['tag']
 
-        return LogRecord(subject, time, scene, people, tag, data, binary)
+        return LogRecord(subject, author, time, scene, people, tag, data, binary)
 
     def allLogPaths(self):
         """ Return all log records' paths in the file
@@ -541,10 +556,10 @@ def pageOut(records):
         """
         text    = str(record)
         pos     = text.find('\n')
-        subject = text[:pos]
+        id      = text[:pos]
         cFormat = '\033[0;33m%s\033[0m'
-        subject = cFormat % subject
-        return subject + text[pos:]
+        id      = cFormat % id
+        return id + text[pos:]
 
     if not records:
         return
@@ -819,6 +834,9 @@ if __name__ == '__main__':
     # load config from file
     try:
         loadConfig()
+    except AssertionError:
+        print(sys.exc_info()[1])
+        exit(1)
     except:
         print(sys.exc_info()[1])
         help(ofile=sys.stderr)
