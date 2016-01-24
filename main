@@ -114,6 +114,12 @@ class Record:
 class Git:
     """ Git related operations
     """
+    SUCCESS  = 0
+    TOFETCH  = 1
+    CONFLICT = 2
+    NOREMOTE = 3
+    UNKNOWN  = 4
+
     def __init__(self, gitWorkTree, gitDir=None):
         if gitDir is None:
             gitDir = os.path.join(gitWorkTree, '.git')
@@ -138,15 +144,18 @@ class Git:
         cmd = ['git', 'init']
         self.runCmd(cmd)
 
-    def runCmd(self, cmd):
-        """ Setup environment and execute command
+    def runCmd(self, cmd, quiet=False):
+        """ Switch the working directory to the
+        GIT_DIR, then run git command there,
+        and then switch back.
         """
-        os.environ.putenv('GIT_WORK_TREE', self.gitWorkTree)
-        os.environ.putenv('GIT_DIR', self.gitDir)
+        owd = os.getcwd()
+        os.chdir(self.gitWorkTree)
         res = lib.get_status_byte_output(cmd)
-        if not res[0]:
+        if not res[0] and not quiet:
             print('git command failed:', file=sys.stderr)
             print(res[2].decode(), file=sys.stderr, end='')
+        os.chdir(owd)
         return res
 
     def last(self):
@@ -154,6 +163,83 @@ class Git:
         it shall be one file only.
         """
         return None
+
+    def shadowInit(self):
+        """ Initialize the shadow git
+        """
+        cmd = ['git', 'shadow-init', '-s']
+        stat, *junk = self.runCmd(cmd, quiet=True)
+        if stat:
+            return True
+        print('shadow git not yet initialized')
+        owd = os.getcwd()
+        os.chdir(self.gitWorkTree)
+        stat = os.system('git shadow-init')
+        os.chdir(owd)
+        return stat == 0
+
+    def setRemote(self, remote):
+        """ Add the remote to git if it does not yet exist
+        """
+        cmd = ['git', 'remote']
+        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
+        lines = stdout.split(b'\n')
+        if remote.encode() in lines:
+            return True
+        print('remote "%s" not exists, adding...' % remote)
+        addr = interact.readstr('addr: ')
+        cmd = ['git', 'remote', 'add', remote, addr]
+        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
+        return stat
+
+    def shadowPush(self, remote, branch='master'):
+        """ Do a shadow-push
+        """
+        cmd = ['git', 'shadow-push', remote, branch]
+        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
+        if not stat:
+            if (b'[rejected]' in stderr and
+                (b'the remote contains work' in stderr or
+                 b'non-fast-forward' in stderr)):
+                code = Git.TOFETCH
+            else:
+                code = Git.UNKNOWN
+        else:
+            code = Git.SUCCESS
+        return (code, stderr)
+
+    def shadowFetch(self, remote, branch='master'):
+        """ Do a shadow-fetch
+        """
+        cmd = ['git', 'shadow-fetch', remote, branch]
+        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
+        return (stat, stderr)
+
+    def shadowMerge(self, remote, branch='master'):
+        """ Do a shadow-merge
+        """
+        code = Git.UNKNOWN
+        cmd  = ['git', 'checkout', branch]
+        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
+        if stat:
+            plainBranch = 'plain-%s-%s' % (remote, branch)
+            cmd = ['git', 'shadow-merge', plainBranch]
+            stat, stdout, stderr = self.runCmd(cmd, quiet=True)
+            if not stat:
+                if b'CONFLICT' in stderr:
+                    code = Git.CONFLICT
+            else:
+                code = Git.SUCCESS
+        return (code, stderr)
+
+    def allRemotes(self):
+        """ Return a list of all remotes
+        """
+        cmd  = ['git', 'remote']
+        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
+        res = stdout.decode().split('\n')
+        res = [x for x in res if x]
+        return res
 
 
 class LogRecord(Record):
@@ -501,6 +587,73 @@ class Log:
                     self.git.commit(changedFiles, message)
                 break
 
+    def push(self, remote):
+        """ Sync with the git server
+
+        Push using shadow-git tools, first shadow-push,
+        if rejected because of unfetched update on the
+        server side, do a shadow-fetch and shadow-merge,
+        then a shadow-push again. In case of conflict
+        that can not be automatically resolved, exit,
+        after manually solved the conflict, user can
+        then try to push again.
+        """
+        def error(msg):
+            print(msg, file=sys.stderr)
+
+        if not self.preAction(remote):
+            return False
+
+        for i in range(2):              # try twice at most
+            print('pushing...')
+            stat, msg = self.git.shadowPush(remote)
+            if stat == Git.TOFETCH:
+                print('push rejected, need to fetch')
+                if self.fetch(remote):
+                    continue
+            elif stat == Git.UNKNOWN:
+                error('unknown error:\n' + msg.decode())
+            elif stat == Git.SUCCESS:
+                print('push done.')
+                return True
+            return False
+
+
+    def preAction(self, remote):
+        """ Actions to carry out before push/fetch
+        """
+        if not self.git.shadowInit():
+            return False
+        if not self.git.setRemote(remote):
+            return False
+        return True
+
+
+    def fetch(self, remote):
+        """ Fetch from the git server
+        """
+        def error(msg):
+            print(msg, file=sys.stderr)
+
+        if not self.preAction(remote):
+            return False
+
+        print('fetching...')
+        stat, msg = self.git.shadowFetch(remote)
+        if not stat:
+            error('fetch failed:\n' + msg.decode())
+        else:
+            print('merging...')
+            stat, msg = self.git.shadowMerge(remote)
+            if stat == Git.SUCCESS:
+                print('fetch done.')
+                return True
+            elif stat == Git.UNKNOWN:
+                error('unknown error:\n' + msg.decode())
+            elif stat == Git.CONFLICT:
+                error('automatic merge failed, fix the conflict, and retry')
+        return False
+
 
 def add(args):
     """ Add a log
@@ -832,10 +985,59 @@ def edit(args):
     logger.edit(id)
 
 
+def push(args):
+    """ Sync with the git server
+    """
+    logger     = Log()
+    remotes    = []
+    allRemotes = False
+    while args:
+        arg = args.pop(0)
+        if arg == '-a':
+            remotes    = logger.git.allRemotes()
+            allRemotes = True
+            break
+        else:
+            remotes.append(arg)
+    if not remotes and not allRemotes:
+        remotes = ['origin']
+    for remote in remotes:
+        print('pushing to "%s"' % remote)
+        stat = logger.push(remote)
+        if not stat:
+            break
+    exit(0 if stat else 1)
+
+
+def fetch(args):
+    """ Download changes from the git server
+    """
+    logger     = Log()
+    remotes    = []
+    allRemotes = False
+    while args:
+        arg = args.pop(0)
+        if arg == '-a':
+            remotes    = logger.git.allRemotes()
+            allRemotes = True
+            break
+        else:
+            remotes.append(arg)
+    if not remotes and not allRemotes:
+        remotes = ['origin']
+    for remote in remotes:
+        print('fetching from "%s"' % remote)
+        stat = logger.fetch(remote)
+        if not stat:
+            break
+    exit(0 if stat else 1)
+
+
 def help(ofile=sys.stdout):
     bname = os.path.basename(sys.argv[0])
     msg =  "Usage:\n\n"
-    msg += "%s --help\n\n" % bname
+    msg += "%s --help\n" % bname
+    msg += "%s [-F config] command [option]...\n\n" % bname
 
     msg += "------- Adding -------\n"
     msg += "%s add\n" % bname
@@ -868,7 +1070,15 @@ def help(ofile=sys.stdout):
     msg += "%s del -i list-of-file          -- get log IDs from a file\n\n" % bname
 
     msg += "------- Editing -------\n"
-    msg += "%s edit 297aacc                 -- edit log whose id starts with 297aacc\n" % bname
+    msg += "%s edit 297aacc                 -- edit log whose id starts with 297aacc\n\n" % bname
+
+    msg += "------- Synchronizing -------\n"
+    msg += "%s push origin                  -- push to remote 'origin'\n" % bname
+    msg += "%s push origin github           -- push to remote 'origin' and 'github'\n" % bname
+    msg += "%s push -a                      -- push to all remotes\n" % bname
+    msg += "%s fetch origin                 -- fetch from remote 'origin'\n" % bname
+    msg += "%s fetch origin github          -- fetch from remote 'origin' and 'github'\n" % bname
+    msg += "%s fetch -a                     -- fetch from all remotes\n" % bname
     print(msg)
 
 
@@ -913,6 +1123,10 @@ if __name__ == '__main__':
             edit(sys.argv[2:])
         elif cmd == 'list':
             _list(sys.argv[2:])
+        elif cmd == 'push':
+            push(sys.argv[2:])
+        elif cmd == 'fetch':
+            fetch(sys.argv[2:])
         else:
             raise lib.InvalidCmdException('unrecognized command: %s' % cmd)
     except IndexError:
