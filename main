@@ -1033,6 +1033,16 @@ def fetch(args):
     exit(0 if stat else 1)
 
 
+def clone(args):
+    """ Clone the repository from the remote
+    """
+    assert len(args) == 1, "wrong arguments"
+    remote  = args[0]
+    dataDir = appConfigs['dataDir']
+    stat    = os.system('git shadow-clone %s %s' % (remote, dataDir))
+    exit(0 if stat else 1)
+
+
 def help(ofile=sys.stdout):
     bname = os.path.basename(sys.argv[0])
     msg =  "Usage:\n\n"
@@ -1078,7 +1088,10 @@ def help(ofile=sys.stdout):
     msg += "%s push -a                      -- push to all remotes\n" % bname
     msg += "%s fetch origin                 -- fetch from remote 'origin'\n" % bname
     msg += "%s fetch origin github          -- fetch from remote 'origin' and 'github'\n" % bname
-    msg += "%s fetch -a                     -- fetch from all remotes\n" % bname
+    msg += "%s fetch -a                     -- fetch from all remotes\n\n" % bname
+
+    msg += "------- Cloning -------\n"
+    msg += "%s clone REMOTE-URL             -- clone from the remote repository\n" % bname
     print(msg)
 
 
@@ -1127,6 +1140,8 @@ if __name__ == '__main__':
             push(sys.argv[2:])
         elif cmd == 'fetch':
             fetch(sys.argv[2:])
+        elif cmd == 'clone':
+            clone(sys.argv[2:])
         else:
             raise lib.InvalidCmdException('unrecognized command: %s' % cmd)
     except IndexError:
