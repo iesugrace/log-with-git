@@ -1220,6 +1220,8 @@ if __name__ == '__main__':
         print('argument error', file=sys.stderr)
         help(ofile=sys.stderr)
         exit(1)
+    except BrokenPipeError:
+        pass
     except (AssertionError,
             lib.InvalidTimeException,
             lib.InvalidCmdException,
