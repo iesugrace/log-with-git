@@ -733,14 +733,32 @@ def _list(args):
                              'today' next to the colon can be omitted.
         c. comma separated: combination of 'a' or 'b' types
     """
+    remainOpts = []
     if len(args) == 0:  # list all records
         filterFunc = lambda record: True
     else:
-        filterFunc = procArgs(args)
+        filterFunc, remainOpts = procArgs(args)
+    limit   = extractLimitArgs(remainOpts)
     logger  = Log()
     records = logger.collectLogs(filterFunc)
     records = sorted(records, key=lambda x: x.time, reverse=True)
+    if limit:
+        records = records[:limit]
     pageOut(records)
+
+
+def extractLimitArgs(args):
+    """ Get all limit arguments out of the args, return the last one.
+    """
+    argsCopy = args[:]
+    limit    = None
+    for arg in argsCopy:
+        if re.search('^-[1-9][0-9]*$', arg):
+            limit = arg
+            args.remove(arg)
+    if limit:
+        limit = int(limit[1:])
+    return limit
 
 
 def pageOut(records):
@@ -775,6 +793,7 @@ def procArgs(args):
     regexps    = []
     matchAll   = False
     timePoints = []
+    remainOpts = []
     while args:
         arg = args.pop(0)
         if arg[:2] == '-S':     # regular expression
@@ -785,10 +804,19 @@ def procArgs(args):
                 regexps.append(args.pop(0))
         elif arg == '--all-match':  # affects the RE evaluation
             matchAll = True
-        else:   # time
-            assert validateTime(arg), ("invalid time: %s" % arg)
-            timePoints.extend(parseTime(arg))
-    return makeFilter(timePoints, regexps, matchAll)
+        elif arg[:2] == '-t':   # time
+            if len(arg) > 2:
+                timeArg = arg[2:]
+            else:
+                assert len(args) > 0, "need argument for -t option"
+                timeArg = args.pop(0)
+            assert validateTime(timeArg), ("invalid time: %s" % timeArg)
+            timePoints.extend(parseTime(timeArg))
+        elif re.search('^-[1-9][0-9]*$', arg):
+            remainOpts.append(arg)
+        else:
+            assert False, "unrecognized option: %s" % arg
+    return makeFilter(timePoints, regexps, matchAll), remainOpts
 
 
 def validateTime(timeStr):
