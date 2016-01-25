@@ -1,2 +1,20 @@
-Copy the whole directory somewhere you like, and create a symbolic link in the PATH for the 'main' file.
-All log files are stored in directory 'data', directly copy it to backup log data.
+1. Copy the whole directory somewhere you like, and create a symbolic link in the PATH for the 'main' file.
+   $ ln -s /some/where/you/like/main ~/bin/log
+
+2. Create a config file, save it to ~/.logrc, here is an example:
+    # vim: filetype=python:
+    #
+    # These code are Python code.
+    # Only variable assignment will be retained
+    
+    # Where to store the log data
+    dataDir = '/home/joshua/.soogho9E_log_data'
+    
+    # Author name
+    authorName = 'Joshua Chen'
+    
+    # Author email
+    authorEmail = 'iesugrace@gmail.com'
+
+3. Check out the usage.
+   $ log --help
