@@ -750,12 +750,14 @@ def pageOut(records):
     def colorize(record):
         """ Render the first line
         """
-        text    = str(record)
-        pos     = text.find('\n')
-        id      = text[:pos]
-        cFormat = '\033[0;33m%s\033[0m'
-        id      = cFormat % id
-        return id + text[pos:]
+        text = str(record)
+        if os.isatty(sys.stdout.fileno()):
+            pos     = text.find('\n')
+            id      = text[:pos]
+            cFormat = '\033[0;33m%s\033[0m'
+            id      = cFormat % id
+            text    = id + text[pos:]
+        return text
 
     if not records:
         return
