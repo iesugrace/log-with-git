@@ -671,6 +671,10 @@ def add(args):
         cmdline arguments --> stdin --> editor
 
     """
+    if '--help' in args:
+        help('add')
+        exit(0)
+
     tag = time = scene = people = message = subject = ''
     data = b''
     binary = False
@@ -733,6 +737,10 @@ def _list(args):
                              'today' next to the colon can be omitted.
         c. comma separated: combination of 'a' or 'b' types
     """
+    if '--help' in args:
+        help('list')
+        exit(0)
+
     remainOpts = []
     if len(args) == 0:  # list all records
         filterFunc = lambda record: True
@@ -976,6 +984,10 @@ def delete(args):
     either from the command line, or from a file; the
     file shall have one line for one ID.
     """
+    if '--help' in args:
+        help('del')
+        exit(0)
+
     ids   = []
     ifile = None
     force = False
@@ -1008,6 +1020,10 @@ def edit(args):
     the file of the log to the appropriate
     new parent directory.
     """
+    if '--help' in args:
+        help('edit')
+        exit(0)
+
     assert len(args) == 1, "wrong arguments"
     id     = args[0]
     assert id, "wrong arguments"
@@ -1018,6 +1034,10 @@ def edit(args):
 def push(args):
     """ Sync with the git server
     """
+    if '--help' in args:
+        help('push')
+        exit(0)
+
     logger     = Log()
     remotes    = []
     allRemotes = False
@@ -1042,6 +1062,10 @@ def push(args):
 def fetch(args):
     """ Download changes from the git server
     """
+    if '--help' in args:
+        help('fetch')
+        exit(0)
+
     logger     = Log()
     remotes    = []
     allRemotes = False
@@ -1066,6 +1090,10 @@ def fetch(args):
 def clone(args):
     """ Clone the repository from the remote
     """
+    if '--help' in args:
+        help('clone')
+        exit(0)
+
     assert len(args) == 1, "wrong arguments"
     remote  = args[0]
     dataDir = appConfigs['dataDir']
@@ -1073,55 +1101,68 @@ def clone(args):
     exit(0 if stat else 1)
 
 
-def help(ofile=sys.stdout):
+def help(cate=None):
     bname = os.path.basename(sys.argv[0])
-    msg =  "Usage:\n\n"
-    msg += "%s --help\n" % bname
-    msg += "%s [-F config] command [option]...\n\n" % bname
+    defaultMsg = "Usage: %s <command> [option [argument]]... [-F config]\n"
+    defaultMsg += "       %s <command> --help"
+    defaultMsg = defaultMsg % ((bname,) * 2)
 
-    msg += "------- Adding -------\n"
-    msg += "%s add\n" % bname
-    msg += "%s add -m message\n" % bname
-    msg += "%s add -m message < file\n" % bname
-    msg += "pipe | %s add -m message\n" % bname
-    msg += "%s add -g tag -t time -c scene -p people -m message\n\n" % bname
+    addMsg = """%s add
+%s add -m message
+%s add -m message < file
+pipe | %s add -m message
+%s add -g tag -t time -c scene -p people -m message""" % ((bname,) * 5)
 
-    msg += "------- Listing -------\n"
-    msg += "%s list                         -- list all\n" % bname
-    msg += "%s list 2016                    -- in 2016\n" % bname
-    msg += "%s list 201601                  -- in Jan. 2016\n" % bname
-    msg += "%s list 20160107                -- on Jan. 7th 2016\n" % bname
-    msg += "%s list -7                      -- the 7th day before\n" % bname
-    msg += "%s list 3:5                     -- 3th through 5th this month\n" % bname
-    msg += "%s list -2:today                -- from the day before yesterday up to today\n" % bname
-    msg += "%s list -2:                     -- from the day before yesterday up to today\n" % bname
-    msg += "%s list 0703:0909               -- 3rd Jul. through 9th Sep. this year\n" % bname
-    msg += "%s list 20150101:today          -- from Jan. 1st 2015 up to today\n" % bname
-    msg += "%s list 20160101,3:5,-2,12      -- any day matches the comma separated list\n" % bname
-    msg += "%s list -Sre                    -- regular expression match for any text fields\n" % bname
-    msg += "%s list -Sre -Sre               -- match any of the regular expression\n" % bname
-    msg += "%s list -Sre -Sre --all-match   -- match all of the regular expressions\n" % bname
-    msg += "%s list 3:5 -Sre                -- regular expression match for any text fields\n\n" % bname
+    listMsg = """%s list                             -- list all
+%s list -3                          -- show the last three log
+%s list -t 2016                     -- in 2016
+%s list -t 201601                   -- in Jan. 2016
+%s list -t 20160107                 -- on Jan. 7th 2016
+%s list -t -7                       -- the 7th day before
+%s list -t 3:5                      -- 3th through 5th this month
+%s list -t -2:today                 -- from the day before yesterday up to today
+%s list -t -2:                      -- from the day before yesterday up to today
+%s list -t 0703:0909                -- 3rd Jul. through 9th Sep. this year
+%s list -t 20150101:today           -- from Jan. 1st 2015 up to today
+%s list -t 20160101,3:5,-2,12       -- any day matches the comma separated list
+%s list -Sre                        -- regular expression match for any text fields
+%s list -Sre -Sre                   -- match any of the regular expression
+%s list -Sre -Sre --all-match       -- match all of the regular expressions
+%s list -t 3:5 -Sre                 -- regular expression match for any text fields""" % ((bname,) * 16)
 
-    msg += "------- Deleting -------\n"
-    msg += "%s del 297aacc                  -- delete log whose id starts with 297aacc\n" % bname
-    msg += "%s del 297aacc 5e0df2c          -- delete multiple logs\n" % bname
-    msg += "%s del -f 297aacc               -- delete without confirmation\n" % bname
-    msg += "%s del -i list-of-file          -- get log IDs from a file\n\n" % bname
+    delMsg = """%s del 297aacc                  -- delete log whose id starts with 297aacc
+%s del 297aacc 5e0df2c          -- delete multiple logs
+%s del -f 297aacc               -- delete without confirmation
+%s del -i list-of-file          -- get log IDs from a file""" % ((bname,) * 4)
 
-    msg += "------- Editing -------\n"
-    msg += "%s edit 297aacc                 -- edit log whose id starts with 297aacc\n\n" % bname
+    editMsg = "%s edit 297aacc" % bname
 
-    msg += "------- Synchronizing -------\n"
-    msg += "%s push origin                  -- push to remote 'origin'\n" % bname
-    msg += "%s push origin github           -- push to remote 'origin' and 'github'\n" % bname
-    msg += "%s push -a                      -- push to all remotes\n" % bname
-    msg += "%s fetch origin                 -- fetch from remote 'origin'\n" % bname
-    msg += "%s fetch origin github          -- fetch from remote 'origin' and 'github'\n" % bname
-    msg += "%s fetch -a                     -- fetch from all remotes\n\n" % bname
+    pushMsg = """%s push origin                  -- push to remote 'origin'
+%s push origin github           -- push to remote 'origin' and 'github'
+%s push -a                      -- push to all remotes""" % ((bname,) * 3)
 
-    msg += "------- Cloning -------\n"
-    msg += "%s clone REMOTE-URL             -- clone from the remote repository\n" % bname
+    fetchMsg = """%s fetch origin                 -- fetch from remote 'origin'
+%s fetch origin github          -- fetch from remote 'origin' and 'github'
+%s fetch -a                     -- fetch from all remotes""" % ((bname,) * 3)
+
+    cloneMsg = "%s clone REMOTE-URL" % bname
+
+    if cate == 'add':
+        msg = addMsg
+    elif cate == 'list':
+        msg = listMsg
+    elif cate == 'del':
+        msg = delMsg
+    elif cate == 'edit':
+        msg = editMsg
+    elif cate == 'push':
+        msg = pushMsg
+    elif cate == 'fetch':
+        msg = fetchMsg
+    elif cate == 'clone':
+        msg = cloneMsg
+    else:
+        msg = defaultMsg
     print(msg)
 
 
@@ -1140,7 +1181,8 @@ def loadConfig():
 
 
 if __name__ == '__main__':
-    if '--help' in sys.argv:
+    ln = len(sys.argv)
+    if ln == 1 or (ln == 2 and '--help' in sys.argv):
         help()
         exit(0)
 
