@@ -1101,7 +1101,8 @@ def clone(args):
 def help(cate=None):
     bname = os.path.basename(sys.argv[0])
     defaultMsg = "Usage: %s <command> [option [argument]]... [-F config]\n"
-    defaultMsg += "       %s <command> --help"
+    defaultMsg += "       %s <command> --help\n"
+    defaultMsg += "available commands: add, del, edit, list, push, fetch, clone"
     defaultMsg = defaultMsg % ((bname,) * 2)
 
     addMsg = """%s add
@@ -1132,7 +1133,7 @@ pipe | %s add -m message
 %s del -f 297aacc               -- delete without confirmation
 %s del -i list-of-file          -- get log IDs from a file""" % ((bname,) * 4)
 
-    editMsg = "%s edit 297aacc" % bname
+    editMsg = "%s edit <log-id>" % bname
 
     pushMsg = """%s push origin                  -- push to remote 'origin'
 %s push origin github           -- push to remote 'origin' and 'github'
@@ -1142,7 +1143,7 @@ pipe | %s add -m message
 %s fetch origin github          -- fetch from remote 'origin' and 'github'
 %s fetch -a                     -- fetch from all remotes""" % ((bname,) * 3)
 
-    cloneMsg = "%s clone REMOTE-URL" % bname
+    cloneMsg = "%s clone <remote-url>" % bname
 
     if cate == 'add':
         msg = addMsg
