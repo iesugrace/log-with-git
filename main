@@ -7,649 +7,19 @@
 import sys, os
 import re
 import time
-from subprocess import Popen, PIPE
 
 prog_path = os.path.realpath(__file__)
 prog_dir  = os.path.dirname(prog_path)
 lib_dir   = os.path.join(prog_dir, 'lib')
 sys.path.insert(0, lib_dir)
 
-from common import editContent
-import interact
-import timeutils
-import lib
+from config      import Config
+from log         import Log
+import applib
 
 # A global dictionary to hold all configs,
 # some classes reference this variable
 appConfigs = {}
-
-class Config:
-    """ Process and store the user settings
-    """
-    defaultConfigName = '.logrc'
-
-    def __init__(self, path=None):
-        """ Rule for the dataDir:
-        1. exists and is a directory, or
-        2. not yet exists
-        """
-        if not path:
-            path = os.path.join(os.getenv('HOME'), self.defaultConfigName)
-        code       = open(path).read()
-        configs    = {}
-        exec(code, configs)
-        configs    = {k: v for k, v in configs.items() if k[0] != '_'}
-        self.data  = configs
-        dataDir    = configs.get('dataDir')
-        dataDirSet = False
-        if dataDir and (
-            os.path.isdir(dataDir) or
-            not os.path.exists(dataDir)):
-                dataDirSet = True
-        assert dataDirSet, "config: no appropriate data directory"
-        assert configs.get('authorName'), "config: author name not set"
-        assert configs.get('authorEmail'), "config: author email not set"
-
-
-class Record:
-    """ Define the fields and methods of a record
-    Fields and types:
-    subject  --  str
-    author   --  str
-    time     --  int
-    scene    --  str
-    people   --  str
-    tag      --  str
-    data     --  str (maybe base64 text for binary data)
-    """
-    sep = ':'  # separator between key and value
-
-    def __init__(self, subject, author, time=None, scene='',
-                        people='', tag='', data='', path=None):
-        time = time if time else timeutils.isodatetime()
-        self.subject   =  subject
-        self.author    =  author
-        self.time      =  timeutils.strtosecond(time)
-        self.scene     =  scene
-        self.people    =  people
-        self.tag       =  tag
-        self.data      =  data
-        self.path      =  path
-
-    def __repr__(self):
-        text = '%s\n\n%s' % (self.__header(), self.subject)
-        if self.binary:
-            data = "-->> Binary data <<--"
-        else:
-            data = self.data
-        if data:
-            text = '%s\n\n%s' % (text, data.rstrip('\n'))
-        return text
-
-    def __header(self):
-        """ Construct the header of the Log
-        Return a str object, no ending new-line.
-        """
-        keys   = ['Author', 'Time', 'Scene', 'People', 'Tag']
-        keys   = [x + self.sep for x in keys]   # append the separator
-        values = [self.author, timeutils.isodatetime(self.time),
-                        self.scene, self.people, self.tag]
-        maxlen = max([len(x) for x in keys])
-        fmt    = '%%-%ds %%s\n' % maxlen
-        text   = ''
-        for k, v in zip(keys, values):
-            if v:
-                text += fmt % (k, v)
-        id     = os.path.basename(self.path) if self.path else 'N/A'
-        text   = 'log %s\n%s' % (id, text[:-1])
-        return text     # remove the last new-line
-
-    def elements(self):
-        """ Return a dictionary containing
-        all elements of the record
-        """
-        return self.__dict__
-
-
-class Git:
-    """ Git related operations
-    """
-    SUCCESS  = 0
-    TOFETCH  = 1
-    CONFLICT = 2
-    NOREMOTE = 3
-    UNKNOWN  = 4
-
-    def __init__(self, gitWorkTree, gitDir=None):
-        if gitDir is None:
-            gitDir = os.path.join(gitWorkTree, '.git')
-        self.gitWorkTree = gitWorkTree
-        self.gitDir      = gitDir
-        if not os.path.exists(gitDir):
-            self.init()
-
-    def commit(self, paths, message):
-        """ Add the files of paths and create a commit
-        """
-        cmd = ['git', 'add', '-A'] + paths
-        res = self.runCmd(cmd)
-        if not res[0]:
-            return False
-        cmd = ['git', 'commit', '-m', message]
-        self.runCmd(cmd)
-
-    def init(self):
-        """ Initialize a git repository
-        """
-        cmd = ['git', 'init']
-        self.runCmd(cmd)
-
-    def runCmd(self, cmd, quiet=False):
-        """ Switch the working directory to the
-        GIT_DIR, then run git command there,
-        and then switch back.
-        """
-        owd = os.getcwd()
-        os.chdir(self.gitWorkTree)
-        res = lib.get_status_byte_output(cmd)
-        if not res[0] and not quiet:
-            print('git command failed:', file=sys.stderr)
-            print(res[2].decode(), file=sys.stderr, end='')
-        os.chdir(owd)
-        return res
-
-    def last(self):
-        """ Return the file content of the last commit
-        it shall be one file only.
-        """
-        return None
-
-    def shadowInit(self):
-        """ Initialize the shadow git
-        """
-        cmd = ['git', 'shadow-init', '-s']
-        stat, *junk = self.runCmd(cmd, quiet=True)
-        if stat:
-            return True
-        print('shadow git not yet initialized')
-        owd = os.getcwd()
-        os.chdir(self.gitWorkTree)
-        stat = os.system('git shadow-init')
-        os.chdir(owd)
-        return stat == 0
-
-    def setRemote(self, remote):
-        """ Add the remote to git if it does not yet exist
-        """
-        cmd = ['git', 'remote']
-        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
-        lines = stdout.split(b'\n')
-        if remote.encode() in lines:
-            return True
-        print('remote "%s" not exists, adding...' % remote)
-        addr = interact.readstr('addr: ')
-        cmd = ['git', 'remote', 'add', remote, addr]
-        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
-        return stat
-
-    def shadowPush(self, remote, branch='master'):
-        """ Do a shadow-push
-        """
-        cmd = ['git', 'shadow-push', remote, branch]
-        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
-        if not stat:
-            if (b'[rejected]' in stderr and
-                (b'the remote contains work' in stderr or
-                 b'non-fast-forward' in stderr)):
-                code = Git.TOFETCH
-            else:
-                code = Git.UNKNOWN
-        else:
-            code = Git.SUCCESS
-        return (code, stderr)
-
-    def shadowFetch(self, remote, branch='master'):
-        """ Do a shadow-fetch
-        """
-        cmd = ['git', 'shadow-fetch', remote, branch]
-        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
-        return (stat, stderr)
-
-    def shadowMerge(self, remote, branch='master'):
-        """ Do a shadow-merge
-        """
-        code = Git.UNKNOWN
-        cmd  = ['git', 'checkout', branch]
-        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
-        if stat:
-            plainBranch = 'plain-%s-%s' % (remote, branch)
-            cmd = ['git', 'shadow-merge', plainBranch]
-            stat, stdout, stderr = self.runCmd(cmd, quiet=True)
-            if not stat:
-                if b'CONFLICT' in stderr:
-                    code = Git.CONFLICT
-            else:
-                code = Git.SUCCESS
-        return (code, stderr)
-
-    def allRemotes(self):
-        """ Return a list of all remotes
-        """
-        cmd  = ['git', 'remote']
-        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
-        res = stdout.decode().split('\n')
-        res = [x for x in res if x]
-        return res
-
-
-class LogRecord(Record):
-    """ Log Record capable of Git operations
-    OS aware operations defined here.
-    """
-    def __init__(self, subject, author, time=None, scene='', people='',
-                    tag='', data='', binary=False, path=None):
-        Record.__init__(self, subject, author, time,
-                        scene, people, tag, data, path)
-        self.binary      = binary
-
-    def save(self, fileName=None):
-        """ Save instance data to disk
-        """
-        timestamp  =  self.time
-        dateEle    =  timeutils.isodate(timestamp).split('-')
-        absDirPath =  os.path.join(appConfigs['dataDir'], *dateEle)
-        if not fileName:
-            fileName = self.genName(timestamp)
-        filePath   =  os.path.join(absDirPath, fileName)
-        os.makedirs(absDirPath, exist_ok=True)
-        self.engine.save(self, filePath)
-        return filePath
-
-    def genName(self, timestamp):
-        """ Generate a file name base on the timestamp,
-        and some random data, the result is a sha1 sum.
-        """
-        import hashlib
-        length = 1024
-        ranData = open('/dev/urandom', 'rb').read(length)
-        string = str(timestamp).encode() + ranData
-        return hashlib.sha1(string).hexdigest()
-
-    def __eq__(self, log):
-        """ compare with another log, if are equal
-        """
-        return (self.people  == log.people and
-                self.time    == log.time   and
-                self.author  == log.author and
-                self.tag     == log.tag    and
-                self.binary  == log.binary and
-                self.scene   == log.scene  and
-                self.data    == log.data   and
-                self.data    == log.data   and
-                self.subject == log.subject)
-
-    def __ne__(self, log):
-        """ compare with another log, if are not equal
-        """
-        return not self.__eq__(log)
-
-    @staticmethod
-    def load(path):
-        return LogRecord.engine.load(path)
-
-
-class XmlStorage:
-    """ XML storage engine for the record
-    """
-    @staticmethod
-    def sourceToDom(code):
-        """ Parse the raw record data which is XML code,
-        return a Xml DOM object.
-        """
-        from xml.dom.minidom import parseString
-        return parseString(code)
-
-    @staticmethod
-    def load(path):
-        """ Load the content of the path,
-        parse it, and return a record instance.
-        """
-        try:
-            code = open(path).read()
-            doc  = XmlStorage.sourceToDom(code)
-        except:
-            return None
-        fields = {}
-        for node in doc.firstChild.childNodes:
-            if node.nodeType == node.ELEMENT_NODE:
-                name = node.localName
-                textNode = node.firstChild
-                data = textNode.data if textNode else ''
-                fields[name] = data
-        fields['binary'] = True if fields['binary'] == 'true' else False
-        fields['path'] = path
-        return LogRecord(**fields)
-
-    @staticmethod
-    def createNode(root, nodeName, nodeText):
-        """ Add an element node with nodeText to the 'root' element
-        """
-        from xml.dom.minidom import Element, Text
-        ele = Element(nodeName)
-        text = Text()
-        text.data = nodeText
-        ele.appendChild(text)
-        root.appendChild(ele)
-
-    @staticmethod
-    def recordToSource(record):
-        """ Compose Xml source code from a record object
-        """
-        from xml.dom.minidom import Document, Text
-        import re
-        doc  = Document()
-        root = doc.createElement("log")
-        doc.appendChild(root)
-        XmlStorage.createNode(root, "subject", record.subject)
-        XmlStorage.createNode(root, "author", record.author)
-        XmlStorage.createNode(root, "time", timeutils.isodatetime(record.time))
-        XmlStorage.createNode(root, "scene", record.scene)
-        XmlStorage.createNode(root, "people", record.people)
-        XmlStorage.createNode(root, "tag", record.tag)
-        if record.binary:
-            XmlStorage.createNode(root, "binary", "true")
-        else:
-            XmlStorage.createNode(root, "binary", "false")
-        XmlStorage.createNode(root, "data", record.data)
-        xmlCode = doc.toprettyxml()
-        xmlCode = re.sub('\n(\s*\n)*', '\n', xmlCode)  # remove empty lines
-        xmlCode = re.sub('\t', '    ', xmlCode)     # replace tabs with spaces
-        return xmlCode
-
-    @staticmethod
-    def save(record, path):
-        """ Convert the record to Xml code,
-        and Write the code to the path.
-        """
-        code = XmlStorage.recordToSource(record)
-        open(path, 'w').write(code)
-
-
-# Register storage engine
-LogRecord.engine = XmlStorage
-
-
-class Log:
-    """ All log operations defined here
-    """
-
-    def __init__(self):
-        dataDir = appConfigs['dataDir']
-        os.makedirs(dataDir, exist_ok=True)
-        self.git = Git(dataDir)
-
-    def lastScene(self):
-        """ Fetch the recently used scene from the history
-        """
-        path = self.git.last()
-        if path != None:
-            record = LogRecord.engine.load(path)
-            if record != None:
-                return record.scene
-        return ''
-
-    def add(self, subject='', time=None, scene='', people='',
-            tag='', data=b'', binary=False, interactive=False):
-        """ Add a log record to the system
-        When interactive is True, ask data for subject, time, scene,
-        people, tag, and log data from the use interactively, the
-        provided arguments are used as the default value for user's
-        choice.
-        """
-
-        author = '%s <%s>' % (appConfigs['authorName'],
-                              appConfigs['authorEmail'])
-        if interactive:
-            record = self.makeLogEntry(subject=subject, author=author,
-                                       time=time, scene=scene, people=people,
-                                       tag=tag, data=data, binary=binary)
-        else:
-            assert (subject != None and subject != ''), "invalid subject"
-            if not binary:
-                data = data.decode()
-            record = LogRecord(subject, author, time, scene,
-                               people, tag, data, binary)
-        path  = record.save()
-        bname = os.path.basename(path)
-        message = 'Add log\n\n%s' % bname
-        self.git.commit([path], message)
-
-    def makeOneRequest(self, name, default, datatype, reader, desc):
-        """ Create a request entry, used to interactively collect
-        information from the user. A request is a dictionary object
-        that contains necessary information to interact with the user.
-        """
-        suffix = (' [%s]: ' % default) if default else ': '
-        prompt = desc + suffix
-        if reader:
-            actual_reader = (lambda prompt, default: reader(prompt, default))
-        else:
-            actual_reader = reader
-        return dict(name=name, prompt=prompt, datatype=datatype,
-                    default=default, reader=actual_reader)
-
-    def makeRequests(self, *, record=None, time=None,
-                    scene=None, people=None, tag=None):
-        """ Create the necessary requests data for collecting
-        information for a Record from the user interactively.
-        """
-        if record:      # a LogRecord instance provided
-            time     =  record.time
-            scene    =  record.scene
-            people   =  record.people
-            tag      =  record.tag
-        else:
-            time = time if time else timeutils.isodatetime()
-            scene = scene if scene else self.lastScene()
-            people = people if people else ''
-            tag = tag if tag else ''
-
-        requests = []
-        # arguments: name, default, datatype, reader, desc
-        requests.append(self.makeOneRequest('time',    time,    str, None, 'time'))
-        requests.append(self.makeOneRequest('scene',   scene,   str, None, 'scene'))
-        requests.append(self.makeOneRequest('people',  people,  str, None, 'people'))
-        requests.append(self.makeOneRequest('tag',     tag,     str, None, 'tag'))
-        return requests
-
-    def makeLogEntry(self, *junk, **args):
-        """ Make a LogRecord instance interactively
-        'data' in the args must be a bytes which can
-        be decoded using utf8, binary data that is
-        not utf8 encoded, is not applicable.
-        """
-        data     = args.pop('data')
-        binary   = args.pop('binary')
-        subject  = args.pop('subject')
-        author   = args.pop('author')
-
-        # read subject and data from editor
-        if binary:
-            iData =  b'\n# Binary data is provided, therefore only the first\n'
-            iData += b'# line will be used for subject, empty message aborts.\n'
-        elif subject:
-            iData = subject.encode()
-            if data:
-                iData += b'\n\n' + data
-        else:
-            iData = b''
-        oData    = editContent(iData).decode()
-        msgLines = oData.split('\n\n')
-        subject  = msgLines.pop(0).strip()
-        if not binary:  # accept data from editor only for non-binary
-            data = '\n\n'.join(msgLines)
-
-        # empty subject, abort
-        assert subject != '', "aborting due to empty subject"
-
-        # read other info
-        requests = self.makeRequests(**args)
-        i        = interact.readMany(requests)
-        time     =  i['time']
-        scene    =  i['scene']
-        people   =  i['people']
-        tag      =  i['tag']
-
-        return LogRecord(subject, author, time, scene, people, tag, data, binary)
-
-    def allLogPaths(self):
-        """ Return all log records' paths in the file
-        system, return a generator.
-        """
-        dataDir = appConfigs['dataDir']
-        cmd = ['find', dataDir, '-name', '.git', '-prune', '-o', '-type', 'f', '-print0']
-        res = lib.get_status_byte_output(cmd)
-        if not res[0]:
-            print('find command failed:', file=sys.stderr)
-            print(res[2].decode(), file=sys.stderr, end='')
-            return
-
-        lines = res[1].split(b'\x00')[:-1]   # remove the last empty one
-        for path in lines:
-            yield path.decode()
-
-    def collectLogs(self, filter=None):
-        """ Walk through all log records, collect those
-        that passed the filter function matching. Return
-        a generator which yields LogRecord instances.
-        """
-        if not filter:
-            filter = lambda record: True
-        paths = self.allLogPaths()
-        for path in paths:
-            record = LogRecord.load(path)
-            if filter(record):
-                yield record
-
-    def delete(self, ids, force=False):
-        """ Delete the logs whose id is in 'ids', confirm
-        before deleting if force is False, partial ID is
-        acceptable, so that 297aacc is equivalent of
-        297aacc3863171ed86ba89a2ea0e88f9c4d99d48.
-        """
-        paths = self.allLogPaths()
-        paths = [path for path in paths for id in ids
-                    if id and os.path.basename(path).startswith(id)]
-        deletedPaths = []
-        for path in paths:
-            bname  = os.path.basename(path)
-            if not force:
-                record = LogRecord.load(path)
-                msg = 'delete %s: %s? ' % (bname, record.subject)
-                ans = interact.readstr(msg, default='N')
-                if ans != 'y':
-                    continue
-            os.remove(path)
-            deletedPaths.append(path)
-            print('deleted %s' % bname)
-        if deletedPaths:
-            bnames = [os.path.basename(x) for x in deletedPaths]
-            message = 'Delete log\n\n%s' % '\n'.join(bnames)
-            self.git.commit(deletedPaths, message)
-
-    def edit(self, id):
-        """ Edit the log of the given id
-        The edited log may be saved to a new directory
-        if its timestamp changed, in such case the old
-        log will be deleted.
-        """
-        paths        = self.allLogPaths()
-        changedFiles = []
-        for path in paths:
-            if os.path.basename(path).startswith(id):
-                oldRecord = LogRecord.load(path)
-                elements  = dict(oldRecord.elements())
-                oldPath   = elements.pop('path')
-                elements['data'] = elements['data'].encode()
-                elements['time'] = timeutils.isodatetime(elements['time'])
-                newRecord = self.makeLogEntry(**elements)
-                if newRecord != oldRecord:
-                    if newRecord.time != oldRecord.time:
-                        os.remove(oldPath)
-                        changedFiles.append(oldPath)
-                    fileName = os.path.basename(oldPath)
-                    newPath  = newRecord.save(fileName)
-                    changedFiles.append(newPath)
-                    message  =  'Change log\n\n%s' % fileName
-                    self.git.commit(changedFiles, message)
-                break
-
-    def push(self, remote):
-        """ Sync with the git server
-
-        Push using shadow-git tools, first shadow-push,
-        if rejected because of unfetched update on the
-        server side, do a shadow-fetch and shadow-merge,
-        then a shadow-push again. In case of conflict
-        that can not be automatically resolved, exit,
-        after manually solved the conflict, user can
-        then try to push again.
-        """
-        def error(msg):
-            print(msg, file=sys.stderr)
-
-        if not self.preAction(remote):
-            return False
-
-        for i in range(2):              # try twice at most
-            print('pushing...')
-            stat, msg = self.git.shadowPush(remote)
-            if stat == Git.TOFETCH:
-                print('push rejected, need to fetch')
-                if self.fetch(remote):
-                    continue
-            elif stat == Git.UNKNOWN:
-                error('unknown error:\n' + msg.decode())
-            elif stat == Git.SUCCESS:
-                print('push done.')
-                return True
-            return False
-
-
-    def preAction(self, remote):
-        """ Actions to carry out before push/fetch
-        """
-        if not self.git.shadowInit():
-            return False
-        if not self.git.setRemote(remote):
-            return False
-        return True
-
-
-    def fetch(self, remote):
-        """ Fetch from the git server
-        """
-        def error(msg):
-            print(msg, file=sys.stderr)
-
-        if not self.preAction(remote):
-            return False
-
-        print('fetching...')
-        stat, msg = self.git.shadowFetch(remote)
-        if not stat:
-            error('fetch failed:\n' + msg.decode())
-        else:
-            print('merging...')
-            stat, msg = self.git.shadowMerge(remote)
-            if stat == Git.SUCCESS:
-                print('fetch done.')
-                return True
-            elif stat == Git.UNKNOWN:
-                error('unknown error:\n' + msg.decode())
-            elif stat == Git.CONFLICT:
-                error('automatic merge failed, fix the conflict, and retry')
-        return False
 
 
 def add(args):
@@ -695,20 +65,20 @@ def add(args):
 
     interactive = not subject
     if interactive and not os.isatty(sys.stdin.fileno()):
-        raise lib.NotTerminalException("stdin is not a terminal")
+        raise applib.NotTerminalException("stdin is not a terminal")
 
     # data from stdin
     if not data and not os.isatty(sys.stdin.fileno()):
         stdin = os.fdopen(sys.stdin.fileno(), 'rb')
         iData = stdin.read()
-        if lib.isBinary(iData):
+        if applib.isBinary(iData):
             binary = True
-            data   = lib.binToAsc(iData).encode()
+            data   = applib.binToAsc(iData).encode()
         else:
             binary = False
             data   = iData
 
-    logger      = Log()
+    logger      = Log(appConfigs)
     logger.add(subject, time, scene, people, tag, data, binary, interactive)
 
 
@@ -744,7 +114,7 @@ def _list(args):
     else:
         filterFunc, remainOpts = procArgs(args)
     limit   = extractLimitArgs(remainOpts)
-    logger  = Log()
+    logger  = Log(appConfigs)
     records = logger.collectLogs(filterFunc)
     records = sorted(records, key=lambda x: x.time, reverse=True)
     if limit:
@@ -785,7 +155,7 @@ def pageOut(records):
     if not records:
         return
     lastOne = records.pop()
-    pager   = lib.Pager(['-XRF'])
+    pager   = applib.Pager(['-XRF'])
     for record in records:
         pager.write(colorize(record), '\n\n', isBytes=False)
     pager.write(colorize(lastOne), '\n', isBytes=False)
@@ -934,7 +304,7 @@ def compreDay(text):
         elif l == 8:                # a day of a month of a year
             res = time.strptime(text, '%Y%m%d')
     except:
-        raise lib.InvalidTimeException("invalid time: %s" % text)
+        raise applib.InvalidTimeException("invalid time: %s" % text)
     return dayPeriod(res)
 
 
@@ -1006,7 +376,7 @@ def delete(args):
         ids.extend(lines)
     assert ids, "no IDs provided"
     ids    = set(ids)
-    logger = Log()
+    logger = Log(appConfigs)
     logger.delete(ids, force=force)
 
 
@@ -1024,7 +394,7 @@ def edit(args):
     assert len(args) == 1, "wrong arguments"
     id     = args[0]
     assert id, "wrong arguments"
-    logger = Log()
+    logger = Log(appConfigs)
     logger.edit(id)
 
 
@@ -1035,7 +405,7 @@ def push(args):
         help('push')
         exit(0)
 
-    logger     = Log()
+    logger     = Log(appConfigs)
     remotes    = []
     allRemotes = False
     while args:
@@ -1063,7 +433,7 @@ def fetch(args):
         help('fetch')
         exit(0)
 
-    logger     = Log()
+    logger     = Log(appConfigs)
     remotes    = []
     allRemotes = False
     while args:
@@ -1213,7 +583,7 @@ if __name__ == '__main__':
         elif cmd == 'clone':
             clone(sys.argv[2:])
         else:
-            raise lib.InvalidCmdException('unrecognized command: %s' % cmd)
+            raise applib.InvalidCmdException('unrecognized command: %s' % cmd)
     except IndexError:
         print('argument error', file=sys.stderr)
         help(ofile=sys.stderr)
@@ -1221,8 +591,8 @@ if __name__ == '__main__':
     except BrokenPipeError:
         pass
     except (AssertionError,
-            lib.InvalidTimeException,
-            lib.InvalidCmdException,
-            lib.NotTerminalException) as e:
+            applib.InvalidTimeException,
+            applib.InvalidCmdException,
+            applib.NotTerminalException) as e:
         print(e, file=sys.stderr)
         exit(1)
