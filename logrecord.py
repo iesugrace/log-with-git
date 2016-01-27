@@ -6,12 +6,6 @@ class LogRecord(Record):
     """ Log Record capable of Git operations
     OS aware operations defined here.
     """
-    def __init__(self, subject, author, time=None, scene='', people='',
-                    tag='', data='', binary=False, path=None):
-        Record.__init__(self, subject, author, time,
-                        scene, people, tag, data, path)
-        self.binary      = binary
-
     def save(self, dataDir, fileName=None):
         """ Save instance data to disk
         """
@@ -34,24 +28,6 @@ class LogRecord(Record):
         ranData = open('/dev/urandom', 'rb').read(length)
         string = str(timestamp).encode() + ranData
         return hashlib.sha1(string).hexdigest()
-
-    def __eq__(self, log):
-        """ compare with another log, if are equal
-        """
-        return (self.people  == log.people and
-                self.time    == log.time   and
-                self.author  == log.author and
-                self.tag     == log.tag    and
-                self.binary  == log.binary and
-                self.scene   == log.scene  and
-                self.data    == log.data   and
-                self.data    == log.data   and
-                self.subject == log.subject)
-
-    def __ne__(self, log):
-        """ compare with another log, if are not equal
-        """
-        return not self.__eq__(log)
 
     @staticmethod
     def load(path):
