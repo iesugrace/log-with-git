@@ -20,6 +20,9 @@ class Git:
 
     def commit(self, paths, message):
         """ Add the files of paths and create a commit
+
+        'paths' is a list of file paths, '-A' option
+        makes git to add the deleted files.
         """
         cmd = ['git', 'add', '-A'] + paths
         res = self.runCmd(cmd)
@@ -49,10 +52,16 @@ class Git:
         return res
 
     def last(self):
-        """ Return the file content of the last commit
-        it shall be one file only.
+        """ Return the file path of the last commit
+        it's a relative path, and one file only.
         """
-        return None
+        path = None
+        cmd  = ['git', 'log', '-1', '--pretty=format:', '--name-only']
+        stat, stdout, stderr = self.runCmd(cmd, quiet=True)
+        if stat:
+            path = stdout.decode().strip().split('\n')[0]
+        path = path if path else None
+        return path
 
     def shadowInit(self):
         """ Initialize the shadow git
@@ -61,7 +70,7 @@ class Git:
         stat, *junk = self.runCmd(cmd, quiet=True)
         if stat:
             return True
-        print('shadow git not yet initialized')
+        print('shadow git not initialized, initializing...')
         owd = os.getcwd()
         os.chdir(self.gitWorkTree)
         stat = os.system('git shadow-init')
@@ -77,7 +86,7 @@ class Git:
         if remote.encode() in lines:
             return True
         print('remote "%s" not exists, adding...' % remote)
-        addr = interact.readstr('addr: ')
+        addr = interact.readstr('address: ')
         cmd = ['git', 'remote', 'add', remote, addr]
         stat, stdout, stderr = self.runCmd(cmd, quiet=True)
         return stat
