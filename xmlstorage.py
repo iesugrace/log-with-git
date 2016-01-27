@@ -22,15 +22,20 @@ class XmlStorage:
             doc  = XmlStorage.sourceToDom(code)
         except:
             return None
+
+        # collect all fields' data
         fields = {}
         for node in doc.firstChild.childNodes:
             if node.nodeType == node.ELEMENT_NODE:
                 name = node.localName
                 textNode = node.firstChild
                 data = textNode.data if textNode else ''
-                fields[name] = data
-        fields['binary'] = True if fields['binary'] == 'true' else False
-        fields['path'] = path
+                desc = LogRecord.fields.get(name)
+                if not desc:    # ignore any fields not defined
+                    continue
+                conv = desc.get('conv', [str, str])[1]
+                fields[name] = conv(data)
+        fields['path'] = path   # this field is not set in the file
         return LogRecord(**fields)
 
     @staticmethod
@@ -53,19 +58,14 @@ class XmlStorage:
         doc  = Document()
         root = doc.createElement("log")
         doc.appendChild(root)
-        XmlStorage.createNode(root, "subject", record.subject)
-        XmlStorage.createNode(root, "author", record.author)
-        XmlStorage.createNode(root, "time", timeutils.isodatetime(record.time))
-        XmlStorage.createNode(root, "scene", record.scene)
-        XmlStorage.createNode(root, "people", record.people)
-        XmlStorage.createNode(root, "tag", record.tag)
-        if record.binary:
-            XmlStorage.createNode(root, "binary", "true")
-        else:
-            XmlStorage.createNode(root, "binary", "false")
-        XmlStorage.createNode(root, "data", record.data)
+        items = sorted(LogRecord.fields.items(),
+                    key=(lambda x: x[1]['order']))
+        for name, desc in items:
+            conv  = desc.get('conv', [str, str])[0]
+            value = conv(getattr(record, name))
+            XmlStorage.createNode(root, name, value)
         xmlCode = doc.toprettyxml()
-        xmlCode = re.sub('\t', '    ', xmlCode)     # replace tabs with spaces
+        xmlCode = re.sub('\t', ' ' * 4, xmlCode)    # replace tabs with spaces
         return xmlCode
 
     @staticmethod
