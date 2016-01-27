@@ -22,12 +22,50 @@ def readint(prompt='', default=None):
         print('invalid input')
 
 def readstr(prompt='', default=None):
-    '''
-    read a string from the user
-    '''
+    """ Read a string from the user
+
+    When the input starts with a plus sign '+',
+    add it to the default if default is provided,
+    separated by SEP.
+
+    When the input starts with a minus sign '-',
+    remove it from the default if default is provided,
+    separator is SEP.
+
+    When the input starts with double minus sign '--',
+    return an empty string.
+    """
+    SEP  = ','
+    JSEP = ', '
+    def cleanSplit(text):
+        """ Split by SEP, strip white spaces
+        at the left and the right, return a list.
+        """
+        if text:
+            xs = text.split(SEP)
+            xs = [x.strip() for x in xs]
+        else:
+            xs = []
+        return xs
+
     while True:
         ans = read(prompt)
         if ans:
+            if ans[:2] == '--':
+                ans = ''
+            elif ans[0] == '-':
+                oldElements = cleanSplit(default)
+                newElements = cleanSplit(ans[1:])
+                resElements = [x for x in oldElements if x not in newElements]
+                ans = JSEP.join(resElements)
+            elif ans[0] == '+':
+                oldElements = cleanSplit(default)
+                newElements = cleanSplit(ans[1:])
+                resElements = oldElements + newElements
+                ans = JSEP.join(resElements)
+            else:
+                resElements = cleanSplit(ans)
+                ans = JSEP.join(resElements)
             return ans
         elif default is not None:
             return default
