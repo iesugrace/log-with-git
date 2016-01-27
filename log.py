@@ -26,8 +26,9 @@ class Log:
         """
         path = self.git.last()
         if path != None:
+            path = os.path.join(self.config['dataDir'], path)
             record = LogRecord.engine.load(path)
-            if record != None:
+            if record is not None:
                 return record.scene
         return ''
 
