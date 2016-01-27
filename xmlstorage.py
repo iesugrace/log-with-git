@@ -65,7 +65,6 @@ class XmlStorage:
             XmlStorage.createNode(root, "binary", "false")
         XmlStorage.createNode(root, "data", record.data)
         xmlCode = doc.toprettyxml()
-        xmlCode = re.sub('\n(\s*\n)*', '\n', xmlCode)  # remove empty lines
         xmlCode = re.sub('\t', '    ', xmlCode)     # replace tabs with spaces
         return xmlCode
 
