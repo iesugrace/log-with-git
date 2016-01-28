@@ -21,16 +21,35 @@ class Log:
         os.makedirs(dataDir, exist_ok=True)
         self.git = Git(dataDir)
 
-    def lastScene(self):
+    def lastScene(self, record=None):
         """ Fetch the recently used scene from the history
         """
+        if not record:
+            record = self.lastLog()
+        if record:
+            return record.scene
+        else:
+            return ''
+
+    def lastTag(self, record=None):
+        """ Fetch the recently used tag from the history
+        """
+        if not record:
+            record = self.lastLog()
+        if record:
+            return record.tag
+        else:
+            return ''
+
+    def lastLog(self):
+        """ Fetch the most recent log record
+        """
         path = self.git.last()
+        record = None
         if path != None:
             path = os.path.join(self.config['dataDir'], path)
             record = LogRecord.engine.load(path)
-            if record is not None:
-                return record.scene
-        return ''
+        return record
 
     def add(self, subject='', time=None, scene='', people='',
             tag='', data=b'', binary=False, interactive=False):
@@ -83,10 +102,18 @@ class Log:
             people   =  record.people
             tag      =  record.tag
         else:
-            time = time if time else timeutils.isodatetime()
-            scene = scene if scene else self.lastScene()
-            people = people if people else ''
-            tag = tag if tag else ''
+            time      = time if time else timeutils.isodatetime()
+            people    = people if people else ''
+            recentLog = None
+            # take the recently used scene and
+            # tag from the most recent log.
+            if not scene:
+                recentLog = self.lastLog()
+                scene     = self.lastScene(recentLog)
+            if not tag:
+                if not recentLog:
+                    recentLog = self.lastLog()
+                tag = self.lastTag(recentLog)
 
         requests = []
         # arguments: name, default, datatype, reader, desc
