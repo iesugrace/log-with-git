@@ -1,5 +1,6 @@
 import os, sys
 import applib
+import interact
 
 class Git:
     """ Git related operations

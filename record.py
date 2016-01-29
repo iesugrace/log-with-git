@@ -25,7 +25,7 @@ class BasicRecord:
     def __eq__(self, record):
         """ compare with another record
         """
-        if not isinstance(record, Record):
+        if not isinstance(record, BasicRecord):
             return False
         for name in self.fields:
             if getattr(self, name) != getattr(record, name):
@@ -44,36 +44,27 @@ class Record(BasicRecord):
     # Definition of fields of the Log record
     # no 'required' field means not required
     # no 'conv' field means default to str
-    # the first conv for writing to file
-    # the second conv for loading from file
+    # the first conv:  --> Record
+    # the second conv:     Record -->
     fields = {
-        'subject': {'required': True, 'order': 1},
-        'author':  {'required': True, 'order': 2},
-        'time':    {'required': True, 'order': 3,
-                    'conv': [isodatetime, strtosecond]},
-        'scene':   {'order': 4},
-        'people':  {'order': 5},
-        'tag':     {'order': 6},
-        'data':    {'order': 7},
-        'binary':  {'conv': [(lambda v: ['false', 'true'][bool(v)]),
-                            (lambda s: s == 'true')], 'order': 8},
+        'id':      {'order': 1},    # id is engine dependent
+        'subject': {'required': True, 'order': 2},
+        'author':  {'required': True, 'order': 3},
+        'time':    {'required': True, 'order': 4,
+                    'conv': [strtosecond, isodatetime]},
+        'scene':   {'order': 5},
+        'people':  {'order': 6},
+        'tag':     {'order': 7},
+        'data':    {'order': 8},
+        'binary':  {'order': 9, 'conv': [(lambda s: s == 'true'),
+                         (lambda v: ['false', 'true'][bool(v)])]},
     }
 
     sep = ':'  # separator between key and value
 
     def __repr__(self):
-        text = '%s\n\n%s' % (self.__header(), self.subject)
-        if self.binary:
-            data = "-->> Binary data <<--"
-        else:
-            data = self.data
-        if data:
-            text = '%s\n\n%s' % (text, data.rstrip('\n'))
-        return text
-
-    def __header(self):
-        """ Construct the header of the Log
-        Return a str object, no ending new-line.
+        """ Class specific representation method
+        Subclass shall redefine this method.
         """
         keys   = ['Author', 'Time', 'Scene', 'People', 'Tag']
         keys   = [x + self.sep for x in keys]   # append the separator
@@ -85,6 +76,43 @@ class Record(BasicRecord):
         for k, v in zip(keys, values):
             if v:
                 text += fmt % (k, v)
-        id     = os.path.basename(self.path) if self.path else 'N/A'
+        id     = self.id if self.id else 'N/A'
         text   = 'log %s\n%s' % (id, text[:-1])
-        return text     # remove the last new-line
+        text   = '%s\n\n%s' % (text, self.subject)
+        if self.binary:
+            data = "-->> Binary data <<--"
+        else:
+            data = self.data
+        if data:
+            text = '%s\n\n%s' % (text, data.rstrip('\n'))
+        return text
+
+    def save(self, oldRecord=None):
+        """ Instance data persistent method
+        """
+        return Record.engine.save(self, oldRecord)
+
+    @staticmethod
+    def load(id):
+        return Record.engine.load(id)
+
+    @staticmethod
+    def allIds():
+        return Record.engine.allIds()
+
+    @staticmethod
+    def matchId(id):
+        return Record.engine.matchId(id)
+
+    @staticmethod
+    def fieldDef(name):
+        """ Return the field definition
+        """
+        return Record.fields[name]
+
+    @staticmethod
+    def getConv(name, toRecord=True):
+        """ Return the converter of a field
+        """
+        idx = 0 if toRecord else 1
+        return Record.fields[name]['conv'][idx]

@@ -13,8 +13,9 @@ prog_dir  = os.path.dirname(prog_path)
 lib_dir   = os.path.join(prog_dir, 'lib')
 sys.path.insert(0, lib_dir)
 
-from config      import Config
-from log         import Log
+from config import Config
+from log import Log
+from timeutils import isodatetime
 import applib
 
 # A global dictionary to hold all configs,
@@ -42,7 +43,7 @@ def add(args):
         help('add')
         exit(0)
 
-    tag = time = scene = people = message = subject = ''
+    tag = _time = scene = people = message = subject = ''
     data = b''
     binary = False
     while len(args) >= 2:
@@ -50,7 +51,7 @@ def add(args):
         if key == '-g':
             tag = args.pop(0)
         elif key == '-t':
-            time = args.pop(0)
+            _time = args.pop(0)
         elif key == '-c':
             scene = args.pop(0)
         elif key == '-p':
@@ -77,9 +78,13 @@ def add(args):
         else:
             binary = False
             data   = iData
-
-    logger      = Log(appConfigs)
-    logger.add(subject, time, scene, people, tag, data, binary, interactive)
+    if not binary:
+        data = data.decode()
+    if not _time:
+        _time = isodatetime()
+    logger = Log(appConfigs)
+    logger.add(subject=subject, time=_time, scene=scene, people=people,
+               tag=tag, data=data, binary=binary, interactive=interactive)
 
 
 def _list(args):
@@ -312,7 +317,7 @@ def makeFilter(timePoints, regexps, matchAll=False):
     """ Create a filter function for filtering
     the record with the given regular expression,
     and the time points. The filter function
-    expects a LogRecord instance object.
+    expects a Record instance object.
     """
     def logFilter(record, regexps=regexps,
                 timePoints=timePoints, matchAll=matchAll):
@@ -468,7 +473,7 @@ def clone(args):
     exit(0 if stat else 1)
 
 
-def help(cate=None):
+def help(cate=None, ofile=sys.stdout):
     bname = os.path.basename(sys.argv[0])
     defaultMsg = "Usage: %s <command> [option [argument]]... [-F config]\n"
     defaultMsg += "       %s <command> --help\n"
@@ -531,7 +536,7 @@ pipe | %s add -m message
         msg = cloneMsg
     else:
         msg = defaultMsg
-    print(msg)
+    print(msg, file=ofile)
 
 
 def loadConfig():
@@ -549,11 +554,6 @@ def loadConfig():
 
 
 if __name__ == '__main__':
-    ln = len(sys.argv)
-    if ln == 1 or (ln == 2 and '--help' in sys.argv):
-        help()
-        exit(0)
-
     # load config from file
     try:
         loadConfig()
@@ -564,6 +564,11 @@ if __name__ == '__main__':
         print(sys.exc_info()[1])
         help(ofile=sys.stderr)
         exit(1)
+
+    ln = len(sys.argv)
+    if ln == 1 or (ln == 2 and '--help' in sys.argv):
+        help()
+        exit(0)
 
     # start to work
     try:

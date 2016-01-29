@@ -1,18 +1,14 @@
 import os, sys
 from git import Git
-from logrecord import LogRecord
+from record import Record
 from xmlstorage  import XmlStorage
 import applib
 import timeutils
 from common import editContent
 import interact
 
-# Register storage engine
-LogRecord.engine  = XmlStorage
-
-
 class Log:
-    """ All log operations defined here
+    """ Log management class
     """
 
     def __init__(self, config):
@@ -20,6 +16,11 @@ class Log:
         dataDir = config['dataDir']
         os.makedirs(dataDir, exist_ok=True)
         self.git = Git(dataDir)
+
+        # Setup and register storage engine
+        XmlStorage.dataDir = dataDir
+        XmlStorage.git     = self.git
+        Record.engine      = XmlStorage
 
     def lastScene(self, record=None):
         """ Fetch the recently used scene from the history
@@ -48,11 +49,10 @@ class Log:
         record = None
         if path != None:
             path = os.path.join(self.config['dataDir'], path)
-            record = LogRecord.engine.load(path)
+            record = Record.load(path)
         return record
 
-    def add(self, subject='', time=None, scene='', people='',
-            tag='', data=b'', binary=False, interactive=False):
+    def add(self, interactive=False, **fields):
         """ Add a log record to the system
         When interactive is True, ask data for subject, time, scene,
         people, tag, and log data from the use interactively, the
@@ -60,22 +60,26 @@ class Log:
         choice.
         """
 
+        if interactive:
+            fields = self.collectLogInfo(**fields)
         author = '%s <%s>' % (self.config['authorName'],
                               self.config['authorEmail'])
-        if interactive:
-            record = self.makeLogEntry(subject=subject, author=author,
-                                       time=time, scene=scene, people=people,
-                                       tag=tag, data=data, binary=binary)
-        else:
-            assert (subject != None and subject != ''), "invalid subject"
-            if not binary:
-                data = data.decode()
-            record = LogRecord(subject, author, time, scene,
-                               people, tag, data, binary)
-        path  = record.save(self.config['dataDir'])
-        bname = os.path.basename(path)
-        message = 'Add log\n\n%s' % bname
-        self.git.commit([path], message)
+        fields['author'] = author
+        assert self.checkRequirement(**fields), "field data not sufficient"
+        fields = Record.engine.convertFields(fields.items())
+        record = Record(**fields)
+        record.save()
+
+    def checkRequirement(self, **args):
+        """ Check if all required fields are provided
+        """
+        desc = Record.fields.items()
+        keys = [k for k, v in desc if v.get('required') == True]
+        for key in keys:
+            if not args.get(key):
+                print('%s is required' % key, file=sys.stderr)
+                return False
+        return True
 
     def makeOneRequest(self, name, default, datatype, reader, desc):
         """ Create a request entry, used to interactively collect
@@ -92,11 +96,11 @@ class Log:
                     default=default, reader=actual_reader)
 
     def makeRequests(self, *, record=None, time=None,
-                    scene=None, people=None, tag=None):
+                    scene=None, people=None, tag=None, **junk):
         """ Create the necessary requests data for collecting
         information for a Record from the user interactively.
         """
-        if record:      # a LogRecord instance provided
+        if record:      # a Record instance provided
             time     =  record.time
             scene    =  record.scene
             people   =  record.people
@@ -108,12 +112,12 @@ class Log:
             # take the recently used scene and
             # tag from the most recent log.
             if not scene:
-                recentLog = self.lastLog()
-                scene     = self.lastScene(recentLog)
+                lastLog = self.lastLog()
+                scene   = self.lastScene(lastLog)
             if not tag:
-                if not recentLog:
-                    recentLog = self.lastLog()
-                tag = self.lastTag(recentLog)
+                if not lastLog:
+                    lastLog = self.lastLog()
+                tag = self.lastTag(lastLog)
 
         requests = []
         # arguments: name, default, datatype, reader, desc
@@ -124,15 +128,24 @@ class Log:
         return requests
 
     def makeLogEntry(self, *junk, **args):
-        """ Make a LogRecord instance interactively
+        id     = args.pop('id')
+        author = args.pop('author')
+        fields = self.collectLogInfo(**args)
+        fields['id']     = id
+        fields['author'] = author
+        assert self.checkRequirement(**fields), "field data not sufficient"
+        fields = Record.engine.convertFields(fields.items())
+        return Record(**fields)
+
+    def collectLogInfo(self, *junk, **args):
+        """ Collect Record fields' info interactively
         'data' in the args must be a bytes which can
         be decoded using utf8, binary data that is
         not utf8 encoded, is not applicable.
         """
         data     = args.pop('data')
-        binary   = args.pop('binary')
         subject  = args.pop('subject')
-        author   = args.pop('author')
+        binary   = args.pop('binary')
 
         # read subject and data from editor
         if binary:
@@ -161,34 +174,19 @@ class Log:
         people   =  i['people']
         tag      =  i['tag']
 
-        return LogRecord(subject, author, time, scene, people, tag, data, binary)
-
-    def allLogPaths(self):
-        """ Return all log records' paths in the file
-        system, return a generator.
-        """
-        dataDir = self.config['dataDir']
-        cmd = ['find', dataDir, '-name', '.git', '-prune', '-o', '-type', 'f', '-print0']
-        res = applib.get_status_byte_output(cmd)
-        if not res[0]:
-            print('find command failed:', file=sys.stderr)
-            print(res[2].decode(), file=sys.stderr, end='')
-            return
-
-        lines = res[1].split(b'\x00')[:-1]   # remove the last empty one
-        for path in lines:
-            yield path.decode()
+        return dict(subject=subject, time=time, scene=scene,
+                      people=people, tag=tag, data=data, binary=binary)
 
     def collectLogs(self, filter=None):
         """ Walk through all log records, collect those
         that passed the filter function matching. Return
-        a generator which yields LogRecord instances.
+        a generator which yields Record instances.
         """
         if not filter:
             filter = lambda record: True
-        paths = self.allLogPaths()
-        for path in paths:
-            record = LogRecord.load(path)
+        ids = Record.allIds()
+        for id in ids:
+            record = Record.load(id)
             if filter(record):
                 yield record
 
@@ -198,25 +196,20 @@ class Log:
         acceptable, so that 297aacc is equivalent of
         297aacc3863171ed86ba89a2ea0e88f9c4d99d48.
         """
-        paths = self.allLogPaths()
-        paths = [path for path in paths for id in ids
-                    if id and os.path.basename(path).startswith(id)]
-        deletedPaths = []
-        for path in paths:
-            bname  = os.path.basename(path)
-            if not force:
-                record = LogRecord.load(path)
-                msg = 'delete %s: %s? ' % (bname, record.subject)
+        allIds = Record.allIds()
+        ids = [storedId for storedId in allIds for id in ids
+                    if id and storedId.startswith(id)]
+        if force:
+            preAction = lambda x: True
+        else:
+            def preAction(record):
+                msg = 'delete %s: %s? ' % (record.id, record.subject)
                 ans = interact.readstr(msg, default='N')
-                if ans != 'y':
-                    continue
-            os.remove(path)
-            deletedPaths.append(path)
-            print('deleted %s' % bname)
-        if deletedPaths:
-            bnames = [os.path.basename(x) for x in deletedPaths]
-            message = 'Delete log\n\n%s' % '\n'.join(bnames)
-            self.git.commit(deletedPaths, message)
+                return ans == 'y'
+        def postAction(record):
+            print('deleted %s' % record.id)
+
+        Record.engine.delete(ids, preAction)
 
     def edit(self, id):
         """ Edit the log of the given id
@@ -224,26 +217,22 @@ class Log:
         if its timestamp changed, in such case the old
         log will be deleted.
         """
-        paths        = self.allLogPaths()
-        changedFiles = []
-        for path in paths:
-            if os.path.basename(path).startswith(id):
-                oldRecord = LogRecord.load(path)
-                elements  = dict(oldRecord.elements())
-                oldPath   = elements.pop('path')
-                elements['data'] = elements['data'].encode()
-                elements['time'] = timeutils.isodatetime(elements['time'])
-                newRecord = self.makeLogEntry(**elements)
-                if newRecord != oldRecord:
-                    if newRecord.time != oldRecord.time:
-                        os.remove(oldPath)
-                        changedFiles.append(oldPath)
-                    fileName = os.path.basename(oldPath)
-                    newPath  = newRecord.save(self.config['dataDir'], fileName)
-                    changedFiles.append(newPath)
-                    message  =  'Change log\n\n%s' % fileName
-                    self.git.commit(changedFiles, message)
-                break
+        ids = Record.matchId(id)
+        if not ids:
+            print('%s not found' % id, file=sys.stderr)
+            return
+        elif len(ids) > 1:
+            id = interact.readstr('multiple match, which one? ')
+            assert id, 'invalid id: "%s"' % id
+
+        oldRecord = Record.load(ids[0])
+        items = oldRecord.elements().items()
+        elements  = dict(oldRecord.elements())
+        conv = Record.getConv('time', toRecord=False)
+        elements['time'] = conv(elements['time'])
+        elements['data'] = elements['data'].encode()
+        newRecord = self.makeLogEntry(**elements)
+        newRecord.save(oldRecord=oldRecord)
 
     def push(self, remote):
         """ Sync with the git server

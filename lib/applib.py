@@ -1,4 +1,5 @@
 from subprocess import Popen, PIPE
+import subprocess
 import base64
 
 class InvalidTimeException(Exception): pass
@@ -15,6 +16,20 @@ def get_status_byte_output(cmd):
     stat    = p.wait()
     pStat   = (stat == 0)
     res     = (pStat, stdout, stderr)
+    return res
+
+
+def get_status_text_output(cmd):
+    """ Run the cmd, return the output as a list of lines
+    as well as the stat of the cmd (True or False), content
+    of the out will be decoded.
+    """
+    stat, output = subprocess.getstatusoutput(cmd)
+    if stat == 0:
+        output = output.split('\n') if output else []
+        res    = (True, output)
+    else:
+        res    = (False, [])
     return res
 
 
