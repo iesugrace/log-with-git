@@ -67,9 +67,10 @@ class Record(BasicRecord):
         Subclass shall redefine this method.
         """
         keys   = ['Author', 'Time', 'Scene', 'People', 'Tag']
+        c      = lambda x: x
+        cvtMap = zip(keys, [c, isodatetime] + [c] * 6)
+        values = [c(getattr(self, k.lower())) for k, c in cvtMap]
         keys   = [x + self.sep for x in keys]   # append the separator
-        values = [self.author, isodatetime(self.time),
-                        self.scene, self.people, self.tag]
         maxlen = max([len(x) for x in keys])
         fmt    = '%%-%ds %%s\n' % maxlen
         text   = ''
