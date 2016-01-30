@@ -203,16 +203,26 @@ class XmlStorage:
 
     @staticmethod
     def lastLog():
-        """ Fetch the most recent log record
-        the paths returned by the git.last may
-        contain two paths, one of the deleted
-        file, one of the existing.
+        """ Fetch the last added/changed log record
         """
-        paths  = XmlStorage.git.last()
-        record = None
+        logs = XmlStorage.lastLogs()
+        if logs:
+            return logs[0]
+        else:
+            return None
+
+    @staticmethod
+    def lastLogs(count=1):
+        """ Fetch the last 'count' logs record
+
+        The paths returned by the git.last may contain
+        paths that been deleted, it shall be ignored.
+        """
+        paths   = XmlStorage.git.last(count)
+        records = []
         for path in paths:
             path = os.path.join(XmlStorage.dataDir, path)
             if os.path.exists(path):
                 record = XmlStorage.load(None, path=path)
-                break
-        return record
+                records.append(record)
+        return records

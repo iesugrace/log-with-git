@@ -52,15 +52,15 @@ class Git:
         os.chdir(owd)
         return res
 
-    def last(self):
-        """ Return the file paths of the last commit
-        that add or change a log, they're relative paths,
-        for an adding commit, there will be one path,
-        for a changing commit, it may be two.
+    def last(self, count=1):
+        """ Return the file paths of the last 'count'
+        commits that add or change a log, they're relative
+        paths, for an adding commit, there will be one
+        path, for a changing commit, it may be two.
         """
         paths = []
         cmd   = ['git', 'log', '--grep=Add log', '--grep=Change log',
-                    '-1', '--pretty=format:', '--name-only']
+                    '-%s' % count, '--pretty=format:', '--name-only']
         stat, stdout, stderr = self.runCmd(cmd, quiet=True)
         if stat:
             paths = stdout.decode().strip().split('\n')
