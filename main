@@ -18,464 +18,325 @@ from log import Log
 from timeutils import isodatetime
 import applib
 
-# A global dictionary to hold all configs,
-# some classes reference this variable
-appConfigs = {}
+class App:
+    def __init__(self, configs):
+        self.configs = configs
 
-
-def add(args):
-    """ Add a log
-    Subject is required, data is not. If message provided,
-    all lines before an empty line will serve as the subject,
-    and the rest as the data. If the subject or the data is
-    not available from the argument, then read from the
-    stdin if the stdin is not a tty. If the data from stdin
-    can not be correctly decoded (binary) to provide the
-    missing subject, enter interactive mode and open up an
-    editor to collect information.
-
-    Priority of the source of subject and data, descending:
-
-        cmdline arguments --> stdin --> editor
-
-    """
-    if '--help' in args:
-        help('add')
-        exit(0)
-
-    tag = _time = scene = people = message = subject = ''
-    data = b''
-    binary = False
-    while len(args) >= 2:
-        key = args.pop(0)
-        if key == '-g':
-            tag = args.pop(0)
-        elif key == '-t':
-            _time = args.pop(0)
-        elif key == '-c':
-            scene = args.pop(0)
-        elif key == '-p':
-            people = args.pop(0)
-        elif key == '-m':
-            message  = args.pop(0)
-    # subject and data from command line
-    if message:
-        msgLines = message.rstrip('\n').split('\n\n')
-        subject  = msgLines.pop(0)
-        data     = '\n\n'.join(msgLines).encode()
-
-    interactive = not subject
-    if interactive and not os.isatty(sys.stdin.fileno()):
-        raise applib.NotTerminalException("stdin is not a terminal")
-
-    # data from stdin
-    if not data and not os.isatty(sys.stdin.fileno()):
-        stdin = os.fdopen(sys.stdin.fileno(), 'rb')
-        iData = stdin.read()
-        if applib.isBinary(iData):
-            binary = True
-            data   = applib.binToAsc(iData)
-        else:
-            binary = False
-            data   = iData
-    if not binary:
-        data = data.decode()
-    if not _time:
-        _time = isodatetime()
-    logger = Log(appConfigs)
-    logger.add(subject=subject, time=_time, scene=scene, people=people,
-               tag=tag, data=data, binary=binary, interactive=interactive)
-
-
-def _list(args):
-    """ List log summary
-
-    Can match log entries by time, or by regular expression.
-
-    Time format (implemented in compreDay):
-        today: the day when the command runs
-        negative number: N-th day ago (-1, -70)
-        one or two digit number: a day of a month (1, 12)
-        four digit number: a day of the specific month  (0413, 0314)
-        four digit number: a year  (2015, 2016)
-        six digit number: a month of a year  (201512, 201601)
-        eight digit number: a day of a month of a year  (20160101)
-
-    Time contextual meaning (implemented in parseTime):
-        a. pure number/word: from the first second of it,
-                             to the last second of it
-        b. colon separated : from the first second of the first,
-                             to the last second of the second,
-                             'today' next to the colon can be omitted.
-        c. comma separated: combination of 'a' or 'b' types
-    """
-    if '--help' in args:
-        help('list')
-        exit(0)
-
-    limit = None
-    argc  = len(args)
-    if len(args) == 0:  # list all records
-        filterFunc = lambda record: True
-    else:
-        filterFunc, remainOpts = procArgs(args)
-        limit = extractLimitArgs(remainOpts)
-    logger  = Log(appConfigs)
-    # only use recentLogs when no other filter options provided
-    if limit and argc == 1:
-        records = logger.recentLogs(limit)
-    else:
-        records = logger.collectLogs(filterFunc)
-        records = sorted(records, key=lambda x: x.time, reverse=True)
+    def extractLimitArgs(self, args):
+        """ Get all limit arguments out of the args, return the last one.
+        """
+        argsCopy = args[:]
+        limit    = None
+        for arg in argsCopy:
+            if re.search('^-[1-9][0-9]*$', arg):
+                limit = arg
+                args.remove(arg)
         if limit:
-            records = records[:limit]
-    pageOut(records)
+            limit = int(limit[1:])
+        return limit
 
 
-def extractLimitArgs(args):
-    """ Get all limit arguments out of the args, return the last one.
-    """
-    argsCopy = args[:]
-    limit    = None
-    for arg in argsCopy:
-        if re.search('^-[1-9][0-9]*$', arg):
-            limit = arg
-            args.remove(arg)
-    if limit:
-        limit = int(limit[1:])
-    return limit
-
-
-def pageOut(records):
-    """ Apply color to the text, pipe the
-    text to a pager, for a better viewing.
-    """
-    def colorize(record):
-        """ Render the first line
+    def procArgs(self, args):
+        """ Process the arguments, return a filter function.
         """
-        text = str(record)
-        if os.isatty(sys.stdout.fileno()):
-            pos     = text.find('\n')
-            id      = text[:pos]
-            cFormat = '\033[0;33m%s\033[0m'
-            id      = cFormat % id
-            text    = id + text[pos:]
-        return text
-
-    if not records:
-        return
-    lastOne = records.pop()
-    pager   = applib.Pager(['-XRF'])
-    for record in records:
-        pager.write(colorize(record), '\n\n', isBytes=False)
-    pager.write(colorize(lastOne), '\n', isBytes=False)
-    pager.go()
-
-
-def procArgs(args):
-    """ Process the arguments, return a filter function.
-    """
-    regexps    = []
-    matchAll   = False
-    timePoints = []
-    remainOpts = []
-    while args:
-        arg = args.pop(0)
-        if arg[:2] == '-S':     # regular expression
-            if len(arg) > 2:
-                regexps.append(arg[2:])
+        regexps    = []
+        matchAll   = False
+        timePoints = []
+        remainOpts = []
+        while args:
+            arg = args.pop(0)
+            if arg[:2] == '-S':     # regular expression
+                if len(arg) > 2:
+                    regexps.append(arg[2:])
+                else:
+                    assert len(args) > 0, "need argument for -S option"
+                    regexps.append(args.pop(0))
+            elif arg == '--all-match':  # affects the RE evaluation
+                matchAll = True
+            elif arg[:2] == '-t':   # time
+                if len(arg) > 2:
+                    timeArg = arg[2:]
+                else:
+                    assert len(args) > 0, "need argument for -t option"
+                    timeArg = args.pop(0)
+                assert applib.validateTime(timeArg), ("invalid time: %s" % timeArg)
+                timePoints.extend(applib.parseTime(timeArg))
+            elif re.search('^-[1-9][0-9]*$', arg):
+                remainOpts.append(arg)
             else:
-                assert len(args) > 0, "need argument for -S option"
-                regexps.append(args.pop(0))
-        elif arg == '--all-match':  # affects the RE evaluation
-            matchAll = True
-        elif arg[:2] == '-t':   # time
-            if len(arg) > 2:
-                timeArg = arg[2:]
-            else:
-                assert len(args) > 0, "need argument for -t option"
-                timeArg = args.pop(0)
-            assert validateTime(timeArg), ("invalid time: %s" % timeArg)
-            timePoints.extend(parseTime(timeArg))
-        elif re.search('^-[1-9][0-9]*$', arg):
-            remainOpts.append(arg)
-        else:
-            assert False, "unrecognized option: %s" % arg
-    return makeFilter(timePoints, regexps, matchAll), remainOpts
+                assert False, "unrecognized option: %s" % arg
+        return self.makeFilter(timePoints, regexps, matchAll), remainOpts
 
 
-def validateTime(timeStr):
-    """ Check the time string format
-    Only check the textual format, not the meaning
-    of the time string, therefore 20160230 is valid.
-    """
-    if timeStr == 'today':
-        return True
+    def delete(self, args):
+        """ Delete logs
 
-    lev1_parts = timeStr.split(',')
-    for lev1_part in lev1_parts:
-        lev2_parts = lev1_part.split(':')
-        for x in lev2_parts:
-            # empty means 'today'
-            regexp = '^(today|-[0-9]+|[0-9]{1,2}|[0-9]{4}|[0-9]{6}|[0-9]{8})?$'
-            if re.search(regexp, x) is None:
-                return False
-    return True
-
-
-def parseTime(timeStr):
-    """ Parse the time string, return a list of lists,
-    every inner list represents a period of time between
-    two points, the relationship between all inner lists
-    is OR, not AND.
-    """
-    if timeStr == 'today':
-        return [todayPeriod()]
-
-    allPairs   = []
-    lev1_parts = timeStr.split(',')
-    for lev1_part in lev1_parts:
-        lev2_parts = lev1_part.split(':')
-        if len(lev2_parts) == 2: # start time and end time
-            firstSecond, junk = compreTime(lev2_parts[0])
-            junk, lastSecond  = compreTime(lev2_parts[1])
-            allPairs.append([firstSecond, lastSecond])
-        else:   # one time
-            pair = compreTime(lev2_parts[0])
-            allPairs.append(pair)
-    return allPairs
-
-
-def todayPeriod():
-    """ Return the first and the last seconds of today
-    """
-    return dayPeriod()
-
-
-def dayPeriod(ts=None):
-    """ Return the first and the last seconds
-    of a day, 'ts' is a time.struct_time object,
-    if omitted, assume the current time.
-    """
-    if ts is None:
-        ts = time.localtime()
-    ts1 = time.strptime('%d%02d%02d' % ts[:3], '%Y%m%d')
-    firstSecond = int(time.mktime(ts1))
-    timeStr = '%d%02d%02d%02d%02d%02d' % (ts[:3] + (23, 59, 59))
-    ts2 = time.strptime(timeStr, '%Y%m%d%H%M%S')
-    lastSecond  = int(time.mktime(ts2))
-    return [firstSecond, lastSecond]
-
-
-def compreTime(text):
-    """ Distinguish between year and other
-    time format, call compreYear and compreDay
-    accordingly. Empty string means 'today'.
-    """
-    if not text:
-        return todayPeriod()
-    if len(text) == 4 and text[:2] == '20':
-        return compreYear(text)
-    else:
-        return compreDay(text)
-
-
-def compreYear(text):
-    """ Take the given number string as a year, return
-    the first second and the last second of the year.
-    """
-    firstDay = time.strptime(text, '%Y')
-    lastDay  = time.strptime('%s%s%s' % (text, '12', '31'), '%Y%m%d')
-    firstSecond, junk = dayPeriod(firstDay)
-    junk, lastSecond  = dayPeriod(lastDay)
-    return [firstSecond, lastSecond]
-
-
-def compreDay(text):
-    """ Parse the given number string, return the
-    first second and the last second of the day.
-    """
-    l = len(text)
-
-    try:
-        if text[0] == '-':          # negative day
-            days = int(text)
-            second = time.time() + 86400 * days
-            res = time.localtime(second)
-        elif 1 <= l <= 2:           # a day of the current month
-            y, m = time.localtime()[:2]
-            d = int(text)
-            res = time.strptime('%s%02d%02d' % (y, m, d), '%Y%m%d')
-        elif l == 4:                # day of a specific month
-            y = time.localtime()[0]
-            res = time.strptime('%s%s' % (y, text), '%Y%m%d')
-        elif l == 6:                # month of a specific year
-            res = time.strptime(text, '%Y%m')
-        elif l == 8:                # a day of a month of a year
-            res = time.strptime(text, '%Y%m%d')
-    except:
-        raise applib.InvalidTimeException("invalid time: %s" % text)
-    return dayPeriod(res)
-
-
-def makeFilter(timePoints, regexps, matchAll=False):
-    """ Create a filter function for filtering
-    the record with the given regular expression,
-    and the time points. The filter function
-    expects a Record instance object.
-    """
-    def logFilter(record, regexps=regexps,
-                timePoints=timePoints, matchAll=matchAll):
-        """ timeMatch is True if the time of the record is
-        within any pair of the timePoints, regMatch is True
-        if any of these fields of a record match the given
-        regular expression: subject, scene, people, tag,
-        and data if it's not of binary form. Return True
-        only when both timeMatch and regMatch are True.
+        Identify logs by the ID, multiple IDs are accepted,
+        either from the command line, or from a file; the
+        file shall have one line for one ID.
         """
-        timeMatch = regMatch = True
-        if timePoints:
-            t = record.time
-            x = [True for t1, t2 in timePoints if t1 <= t <= t2]
-            timeMatch = bool(x)
-        if regexps:
-            g = [record.subject, record.scene, record.people, record.tag]
-            if not record.binary:
-                g.append(record.data)
+        if '--help' in args:
+            help('del')
+            exit(0)
 
-            if matchAll:
-                matcher = lambda ps, f: len([1 for p in ps if re.search(p, f)]) == len(ps)
+        ids   = []
+        ifile = None
+        force = False
+        while args:
+            arg = args.pop(0)
+            if arg[:2] == '-i':     # input file
+                if len(arg) > 2:
+                    ifile = arg[2:]
+                else:
+                    assert len(args) > 0, "need argument for -i option"
+                    ifile = args.pop(0)
+            elif arg == '-f':
+                force = True
+            else:   # log ID
+                ids.append(arg)
+        if ifile:
+            lines = open(ifile).readlines()
+            lines = [x.rstrip() for x in lines if len(x) > 1]
+            ids.extend(lines)
+        assert ids, "no IDs provided"
+        ids    = set(ids)
+        logger = Log(self.configs)
+        logger.delete(ids, force=force)
+
+
+    def edit(self, args):
+        """ Edit a log
+        """
+        if '--help' in args:
+            help('edit')
+            exit(0)
+
+        assert len(args) == 1, "wrong arguments"
+        id     = args[0]
+        assert id, "wrong arguments"
+        logger = Log(self.configs)
+        logger.edit(id)
+
+
+    def push(self, args):
+        """ Sync with the git server
+        """
+        if '--help' in args:
+            help('push')
+            exit(0)
+
+        logger     = Log(self.configs)
+        remotes    = []
+        allRemotes = False
+        while args:
+            arg = args.pop(0)
+            if arg == '-a':
+                remotes    = logger.git.allRemotes()
+                allRemotes = True
+                break
             else:
-                matcher = lambda ps, f: bool([1 for p in ps if re.search(p, f)])
-            x = [True for f in g if matcher(regexps, f)]
-            regMatch = bool(x)
-        return timeMatch and regMatch
+                remotes.append(arg)
+        if not remotes and not allRemotes:
+            remotes = ['origin']
+        for remote in remotes:
+            print('pushing to "%s"' % remote)
+            stat = logger.push(remote)
+            if not stat:
+                break
+        exit(0 if stat else 1)
 
-    return logFilter
 
+    def fetch(self, args):
+        """ Download changes from the git server
+        """
+        if '--help' in args:
+            help('fetch')
+            exit(0)
 
-def delete(args):
-    """ Delete logs
-
-    Identify logs by the ID, multiple IDs are accepted,
-    either from the command line, or from a file; the
-    file shall have one line for one ID.
-    """
-    if '--help' in args:
-        help('del')
-        exit(0)
-
-    ids   = []
-    ifile = None
-    force = False
-    while args:
-        arg = args.pop(0)
-        if arg[:2] == '-i':     # input file
-            if len(arg) > 2:
-                ifile = arg[2:]
+        logger     = Log(self.configs)
+        remotes    = []
+        allRemotes = False
+        while args:
+            arg = args.pop(0)
+            if arg == '-a':
+                remotes    = logger.git.allRemotes()
+                allRemotes = True
+                break
             else:
-                assert len(args) > 0, "need argument for -i option"
-                ifile = args.pop(0)
-        elif arg == '-f':
-            force = True
-        else:   # log ID
-            ids.append(arg)
-    if ifile:
-        lines = open(ifile).readlines()
-        lines = [x.rstrip() for x in lines if len(x) > 1]
-        ids.extend(lines)
-    assert ids, "no IDs provided"
-    ids    = set(ids)
-    logger = Log(appConfigs)
-    logger.delete(ids, force=force)
+                remotes.append(arg)
+        if not remotes and not allRemotes:
+            remotes = ['origin']
+        for remote in remotes:
+            print('fetching from "%s"' % remote)
+            stat = logger.fetch(remote)
+            if not stat:
+                break
+        exit(0 if stat else 1)
 
 
-def edit(args):
-    """ Edit a log
+    def clone(self, args):
+        """ Clone the repository from the remote
+        """
+        if '--help' in args:
+            help('clone')
+            exit(0)
 
-    If the time of the log been changed, move
-    the file of the log to the appropriate
-    new parent directory.
+        assert len(args) == 1, "wrong arguments"
+        remote  = args[0]
+        dataDir = self.configs['dataDir']
+        stat    = os.system('git shadow-clone %s %s' % (remote, dataDir))
+        exit(0 if stat else 1)
+
+
+    """ Methods defined below are Record definition specific,
+    subclasses shall redefine/extend these methods according
+    to the Record fields definition, or add more others.
     """
-    if '--help' in args:
-        help('edit')
-        exit(0)
-
-    assert len(args) == 1, "wrong arguments"
-    id     = args[0]
-    assert id, "wrong arguments"
-    logger = Log(appConfigs)
-    logger.edit(id)
 
 
-def push(args):
-    """ Sync with the git server
-    """
-    if '--help' in args:
-        help('push')
-        exit(0)
+    def add(self, args):
+        """ Add a log
+        If message provided, all lines before an empty line
+        will serve as the subject, and the rest as the data.
+        If the data is not available from the argument, read
+        it from the stdin if the stdin is not a tty. If the
+        -m option is not provided, or its argument is empty,
+        enter interactive mode and open up an editor to
+        collect the subject and optionally the data.
 
-    logger     = Log(appConfigs)
-    remotes    = []
-    allRemotes = False
-    while args:
-        arg = args.pop(0)
-        if arg == '-a':
-            remotes    = logger.git.allRemotes()
-            allRemotes = True
-            break
+        Priority of the source of subject and data, descending:
+
+            cmdline arguments --> stdin --> editor
+
+        """
+        if '--help' in args:
+            help('add')
+            exit(0)
+
+        tag = _time = scene = people = message = subject = ''
+        data = b''
+        binary = False
+        while len(args) >= 2:
+            key = args.pop(0)
+            if key == '-g':
+                tag = args.pop(0)
+            elif key == '-t':
+                _time = args.pop(0)
+            elif key == '-c':
+                scene = args.pop(0)
+            elif key == '-p':
+                people = args.pop(0)
+            elif key == '-m':
+                message  = args.pop(0)
+        # subject and data from command line
+        if message:
+            msgLines = message.rstrip('\n').split('\n\n')
+            subject  = msgLines.pop(0)
+            data     = '\n\n'.join(msgLines).encode()
+
+        interactive = not subject
+        if interactive and not os.isatty(sys.stdin.fileno()):
+            msg = "no -m option, assume interactive mode, but stdin is not a terminal"
+            raise applib.NotTerminalException(msg)
+
+        # data from stdin
+        if not data and not os.isatty(sys.stdin.fileno()):
+            stdin = os.fdopen(sys.stdin.fileno(), 'rb')
+            iData = stdin.read()
+            if applib.isBinary(iData):
+                binary = True
+                data   = applib.binToAsc(iData)
+            else:
+                binary = False
+                data   = iData
+        if not binary:
+            data = data.decode()
+        if not _time:
+            _time = isodatetime()
+        logger = Log(self.configs)
+        logger.add(subject=subject, time=_time, scene=scene, people=people,
+                   tag=tag, data=data, binary=binary, interactive=interactive)
+
+
+    def _list(self, args):
+        """ List log summary
+
+        Match log entries by time, and/or regular expression.
+
+        Time format (implemented in applib.compreDay):
+            today: the day when the command runs
+            negative number: N-th day ago (-1, -70)
+            one or two digit number: a day of a month (1, 12)
+            four digit number: a day of the specific month  (0413, 0314)
+            four digit number: a year  (2015, 2016)
+            six digit number: a month of a year  (201512, 201601)
+            eight digit number: a day of a month of a year  (20160101)
+
+        Time contextual meaning (implemented in parseTime):
+            a. pure number/word: from the first second of it,
+                                 to the last second of it
+            b. colon separated : from the first second of the first,
+                                 to the last second of the second,
+                                 'today' next to the colon can be omitted.
+            c. comma separated: combination of 'a' or 'b' types
+        """
+        if '--help' in args:
+            help('list')
+            exit(0)
+
+        limit = None
+        argc  = len(args)
+        if len(args) == 0:  # list all records
+            filterFunc = lambda record: True
         else:
-            remotes.append(arg)
-    if not remotes and not allRemotes:
-        remotes = ['origin']
-    for remote in remotes:
-        print('pushing to "%s"' % remote)
-        stat = logger.push(remote)
-        if not stat:
-            break
-    exit(0 if stat else 1)
-
-
-def fetch(args):
-    """ Download changes from the git server
-    """
-    if '--help' in args:
-        help('fetch')
-        exit(0)
-
-    logger     = Log(appConfigs)
-    remotes    = []
-    allRemotes = False
-    while args:
-        arg = args.pop(0)
-        if arg == '-a':
-            remotes    = logger.git.allRemotes()
-            allRemotes = True
-            break
+            filterFunc, remainOpts = self.procArgs(args)
+            limit = self.extractLimitArgs(remainOpts)
+        logger  = Log(self.configs)
+        # only use recentLogs when no other filter options provided
+        if limit and argc == 1:
+            records = logger.recentLogs(limit)
         else:
-            remotes.append(arg)
-    if not remotes and not allRemotes:
-        remotes = ['origin']
-    for remote in remotes:
-        print('fetching from "%s"' % remote)
-        stat = logger.fetch(remote)
-        if not stat:
-            break
-    exit(0 if stat else 1)
+            records = logger.collectLogs(filterFunc)
+            records = sorted(records, key=lambda x: x.time, reverse=True)
+            if limit:
+                records = records[:limit]
+        applib.pageOut(records)
 
 
-def clone(args):
-    """ Clone the repository from the remote
-    """
-    if '--help' in args:
-        help('clone')
-        exit(0)
+    def makeFilter(self, timePoints, regexps, matchAll=False):
+        """ Create a filter function for filtering
+        the record with the given regular expression,
+        and the time points. The filter function
+        expects a Record instance object.
+        """
+        def logFilter(record, regexps=regexps,
+                    timePoints=timePoints, matchAll=matchAll):
+            """ timeMatch is True if the time of the record is
+            within any pair of the timePoints, regMatch is True
+            if any of these fields of a record match the given
+            regular expression: subject, scene, people, tag,
+            and data if it's not of binary form. Return True
+            only when both timeMatch and regMatch are True.
+            """
+            timeMatch = regMatch = True
+            if timePoints:
+                t = record.time
+                x = [True for t1, t2 in timePoints if t1 <= t <= t2]
+                timeMatch = bool(x)
+            if regexps:
+                g = [record.subject, record.scene, record.people, record.tag]
+                if not record.binary:
+                    g.append(record.data)
 
-    assert len(args) == 1, "wrong arguments"
-    remote  = args[0]
-    dataDir = appConfigs['dataDir']
-    stat    = os.system('git shadow-clone %s %s' % (remote, dataDir))
-    exit(0 if stat else 1)
+                if matchAll:
+                    matcher = lambda ps, f: len([1 for p in ps if re.search(p, f)]) == len(ps)
+                else:
+                    matcher = lambda ps, f: bool([1 for p in ps if re.search(p, f)])
+                x = [True for f in g if matcher(regexps, f)]
+                regMatch = bool(x)
+            return timeMatch and regMatch
+
+        return logFilter
 
 
 def help(cate=None, ofile=sys.stdout):
@@ -545,6 +406,7 @@ pipe | %s add -m message
 
 
 def loadConfig():
+    appConfigs = {}
     if '-F' in sys.argv:
         idx = sys.argv.index('-F')
         sys.argv.pop(idx)
@@ -552,16 +414,16 @@ def loadConfig():
         path = sys.argv.pop(idx)
     else:
         path = None
-
     config = Config(path)
     for k, v in config.data.items():
         appConfigs[k] = v
+    return appConfigs
 
 
 if __name__ == '__main__':
     # load config from file
     try:
-        loadConfig()
+        appConfigs = loadConfig()
     except AssertionError:
         print(sys.exc_info()[1])
         exit(1)
@@ -576,22 +438,23 @@ if __name__ == '__main__':
         exit(0)
 
     # start to work
+    app = App(appConfigs)
     try:
         cmd = sys.argv[1]
         if cmd == 'add':
-            add(sys.argv[2:])
+            app.add(sys.argv[2:])
         elif cmd == 'del':
-            delete(sys.argv[2:])
+            app.delete(sys.argv[2:])
         elif cmd == 'edit':
-            edit(sys.argv[2:])
+            app.edit(sys.argv[2:])
         elif cmd == 'list':
-            _list(sys.argv[2:])
+            app._list(sys.argv[2:])
         elif cmd == 'push':
-            push(sys.argv[2:])
+            app.push(sys.argv[2:])
         elif cmd == 'fetch':
-            fetch(sys.argv[2:])
+            app.fetch(sys.argv[2:])
         elif cmd == 'clone':
-            clone(sys.argv[2:])
+            app.clone(sys.argv[2:])
         else:
             raise applib.InvalidCmdException('unrecognized command: %s' % cmd)
     except IndexError:

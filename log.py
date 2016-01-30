@@ -181,6 +181,13 @@ class Log:
         return False
 
 
+    def recentLogs(self, count):
+        """ Fetch the last 'count' logs that newly
+        added or changed, use git for better speed.
+        """
+        return Record.engine.lastLogs(count)
+
+
     """ Methods defined below are Record definition specific,
     subclasses shall redefine/extend these methods according
     to the Record fields definition, or add more others.

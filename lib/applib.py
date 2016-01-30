@@ -1,3 +1,4 @@
+import sys, os
 from subprocess import Popen, PIPE
 import subprocess
 import base64
@@ -105,3 +106,143 @@ def makeOneRequest(name, default, datatype, reader, desc):
         actual_reader = reader
     return dict(name=name, prompt=prompt, datatype=datatype,
                 default=default, reader=actual_reader)
+
+
+def pageOut(records):
+    """ Apply color to the text, pipe the
+    text to a pager, for a better viewing.
+    """
+    def colorize(record):
+        """ Render the first line
+        """
+        text = str(record)
+        if os.isatty(sys.stdout.fileno()):
+            pos     = text.find('\n')
+            id      = text[:pos]
+            cFormat = '\033[0;33m%s\033[0m'
+            id      = cFormat % id
+            text    = id + text[pos:]
+        return text
+
+    if not records:
+        return
+    lastOne = records.pop()
+    pager   = Pager(['-XRF'])
+    for record in records:
+        pager.write(colorize(record), '\n\n', isBytes=False)
+    pager.write(colorize(lastOne), '\n', isBytes=False)
+    pager.go()
+
+
+def validateTime(timeStr):
+    """ Check the time string format
+    Only check the textual format, not the meaning
+    of the time string, therefore 20160230 is valid.
+    """
+    if timeStr == 'today':
+        return True
+
+    lev1_parts = timeStr.split(',')
+    for lev1_part in lev1_parts:
+        lev2_parts = lev1_part.split(':')
+        for x in lev2_parts:
+            # empty means 'today'
+            regexp = '^(today|-[0-9]+|[0-9]{1,2}|[0-9]{4}|[0-9]{6}|[0-9]{8})?$'
+            if re.search(regexp, x) is None:
+                return False
+    return True
+
+
+def parseTime(timeStr):
+    """ Parse the time string, return a list of lists,
+    every inner list represents a period of time between
+    two points, the relationship between all inner lists
+    is OR, not AND.
+    """
+    if timeStr == 'today':
+        return [todayPeriod()]
+
+    allPairs   = []
+    lev1_parts = timeStr.split(',')
+    for lev1_part in lev1_parts:
+        lev2_parts = lev1_part.split(':')
+        if len(lev2_parts) == 2: # start time and end time
+            firstSecond, junk = compreTime(lev2_parts[0])
+            junk, lastSecond  = compreTime(lev2_parts[1])
+            allPairs.append([firstSecond, lastSecond])
+        else:   # one time
+            pair = compreTime(lev2_parts[0])
+            allPairs.append(pair)
+    return allPairs
+
+
+def todayPeriod():
+    """ Return the first and the last seconds of today
+    """
+    return dayPeriod()
+
+
+def dayPeriod(ts=None):
+    """ Return the first and the last seconds
+    of a day, 'ts' is a time.struct_time object,
+    if omitted, assume the current time.
+    """
+    if ts is None:
+        ts = time.localtime()
+    ts1 = time.strptime('%d%02d%02d' % ts[:3], '%Y%m%d')
+    firstSecond = int(time.mktime(ts1))
+    timeStr = '%d%02d%02d%02d%02d%02d' % (ts[:3] + (23, 59, 59))
+    ts2 = time.strptime(timeStr, '%Y%m%d%H%M%S')
+    lastSecond  = int(time.mktime(ts2))
+    return [firstSecond, lastSecond]
+
+
+def compreTime(text):
+    """ Distinguish between year and other
+    time format, call compreYear and compreDay
+    accordingly. Empty string means 'today'.
+    """
+    if not text:
+        return todayPeriod()
+    if len(text) == 4 and text[:2] == '20':
+        return compreYear(text)
+    else:
+        return compreDay(text)
+
+
+def compreYear(text):
+    """ Take the given number string as a year, return
+    the first second and the last second of the year.
+    """
+    firstDay = time.strptime(text, '%Y')
+    lastDay  = time.strptime('%s%s%s' % (text, '12', '31'), '%Y%m%d')
+    firstSecond, junk = dayPeriod(firstDay)
+    junk, lastSecond  = dayPeriod(lastDay)
+    return [firstSecond, lastSecond]
+
+
+def compreDay(text):
+    """ Parse the given number string, return the
+    first second and the last second of the day.
+    """
+    l = len(text)
+
+    try:
+        if text[0] == '-':          # negative day
+            days = int(text)
+            second = time.time() + 86400 * days
+            res = time.localtime(second)
+        elif 1 <= l <= 2:           # a day of the current month
+            y, m = time.localtime()[:2]
+            d = int(text)
+            res = time.strptime('%s%02d%02d' % (y, m, d), '%Y%m%d')
+        elif l == 4:                # day of a specific month
+            y = time.localtime()[0]
+            res = time.strptime('%s%s' % (y, text), '%Y%m%d')
+        elif l == 6:                # month of a specific year
+            res = time.strptime(text, '%Y%m')
+        elif l == 8:                # a day of a month of a year
+            res = time.strptime(text, '%Y%m%d')
+    except:
+        raise InvalidTimeException("invalid time: %s" % text)
+    return dayPeriod(res)
