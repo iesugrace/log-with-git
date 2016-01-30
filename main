@@ -74,7 +74,7 @@ def add(args):
         iData = stdin.read()
         if applib.isBinary(iData):
             binary = True
-            data   = applib.binToAsc(iData).encode()
+            data   = applib.binToAsc(iData)
         else:
             binary = False
             data   = iData
