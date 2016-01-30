@@ -90,3 +90,18 @@ class Pager:
     def go(self):
         self.pager.stdin.close()
         self.pager.wait()
+
+
+def makeOneRequest(name, default, datatype, reader, desc):
+    """ Create a request entry, used to interactively collect
+    information from the user. A request is a dictionary object
+    that contains necessary information to interact with the user.
+    """
+    suffix = (' [%s]: ' % default) if default else ': '
+    prompt = desc + suffix
+    if reader:
+        actual_reader = (lambda prompt, default: reader(prompt, default))
+    else:
+        actual_reader = reader
+    return dict(name=name, prompt=prompt, datatype=datatype,
+                default=default, reader=actual_reader)

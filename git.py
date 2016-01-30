@@ -53,16 +53,19 @@ class Git:
         return res
 
     def last(self):
-        """ Return the file path of the last commit
-        it's a relative path, and one file only.
+        """ Return the file paths of the last commit
+        that add or change a log, they're relative paths,
+        for an adding commit, there will be one path,
+        for a changing commit, it may be two.
         """
-        path = None
-        cmd  = ['git', 'log', '-1', '--pretty=format:', '--name-only']
+        paths = []
+        cmd   = ['git', 'log', '--grep=Add log', '--grep=Change log',
+                    '-1', '--pretty=format:', '--name-only']
         stat, stdout, stderr = self.runCmd(cmd, quiet=True)
         if stat:
-            path = stdout.decode().strip().split('\n')[0]
-        path = path if path else None
-        return path
+            paths = stdout.decode().strip().split('\n')
+            paths = [x for x in paths if x]
+        return paths
 
     def shadowInit(self):
         """ Initialize the shadow git

@@ -72,7 +72,8 @@ class XmlStorage:
     def matchId(id):
         """ Return all IDs that starts with 'id'
         """
-        cmd = 'find %s -name "%s*"' % (XmlStorage.dataDir, id)
+        cmd = 'find %s -name .git -prune -o -name "%s*" -type f -print'
+        cmd = cmd % (XmlStorage.dataDir, id)
         stat, lines = applib.get_status_text_output(cmd)
         ids = list(map(os.path.basename, lines))
         return ids
@@ -113,12 +114,15 @@ class XmlStorage:
 
     @staticmethod
     def save(record, oldRecord=None):
-        """ Convert the record to Xml code,
-        and Write the code to the disk, record
-        id is the basename of the record file.
+        """ Convert the record to Xml code, and Write
+        the code to the disk, record id is the basename
+        of the record file.
 
-        If the oldRecord is provided, this is
-        to change an existing record.
+        If the oldRecord is provided, this is to change
+        an existing record. When to change an existing
+        log, the new log may be saved to a new directory
+        if its timestamp been changed, in such case the
+        old log will be deleted.
         """
         timestamp  = record.time
         dateEle    = isodate(timestamp).split('-')
@@ -196,3 +200,19 @@ class XmlStorage:
         if deletedPaths:
             message = 'Delete log\n\n%s' % '\n'.join(deletedBNames)
             XmlStorage.git.commit(deletedPaths, message)
+
+    @staticmethod
+    def lastLog():
+        """ Fetch the most recent log record
+        the paths returned by the git.last may
+        contain two paths, one of the deleted
+        file, one of the existing.
+        """
+        paths  = XmlStorage.git.last()
+        record = None
+        for path in paths:
+            path = os.path.join(XmlStorage.dataDir, path)
+            if os.path.exists(path):
+                record = XmlStorage.load(None, path=path)
+                break
+        return record
