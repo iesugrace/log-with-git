@@ -4,7 +4,7 @@
 2. Create a config file, save it to ~/.logrc, here is an example:
     # vim: filetype=python:
     #
-    # These code are Python code.
+    # These code is Python code.
     # Only variable assignment will be retained
     
     # Where to store the log data
