@@ -113,17 +113,22 @@ def _list(args):
         help('list')
         exit(0)
 
-    remainOpts = []
+    limit = None
+    argc  = len(args)
     if len(args) == 0:  # list all records
         filterFunc = lambda record: True
     else:
         filterFunc, remainOpts = procArgs(args)
-    limit   = extractLimitArgs(remainOpts)
+        limit = extractLimitArgs(remainOpts)
     logger  = Log(appConfigs)
-    records = logger.collectLogs(filterFunc)
-    records = sorted(records, key=lambda x: x.time, reverse=True)
-    if limit:
-        records = records[:limit]
+    # only use recentLogs when no other filter options provided
+    if limit and argc == 1:
+        records = logger.recentLogs(limit)
+    else:
+        records = logger.collectLogs(filterFunc)
+        records = sorted(records, key=lambda x: x.time, reverse=True)
+        if limit:
+            records = records[:limit]
     pageOut(records)
 
 
@@ -487,7 +492,7 @@ pipe | %s add -m message
 %s add -g tag -t time -c scene -p people -m message""" % ((bname,) * 5)
 
     listMsg = """%s list                             -- list all
-%s list -3                          -- show the last three log
+%s list -3                          -- the last three added/changed
 %s list -t 2016                     -- in 2016
 %s list -t 201601                   -- in Jan. 2016
 %s list -t 20160107                 -- on Jan. 7th 2016
