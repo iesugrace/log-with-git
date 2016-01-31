@@ -40,19 +40,22 @@ class App:
         """ Process the arguments, return a filter function.
         """
         regexps    = []
-        matchAll   = False
+        allMatch   = False
         timePoints = []
         remainOpts = []
         while args:
             arg = args.pop(0)
             if arg[:2] == '-S':     # regular expression
                 if len(arg) > 2:
-                    regexps.append(arg[2:])
+                    regexp = arg[2:]
                 else:
                     assert len(args) > 0, "need argument for -S option"
-                    regexps.append(args.pop(0))
+                    regexp = args.pop(0)
+                patter = applib.parsePattern(regexp)
+                assert patter, ("invalid pattern: %s" % regexp)
+                regexps.append(patter)
             elif arg == '--all-match':  # affects the RE evaluation
-                matchAll = True
+                allMatch = True
             elif arg[:2] == '-t':   # time
                 if len(arg) > 2:
                     timeArg = arg[2:]
@@ -65,7 +68,7 @@ class App:
                 remainOpts.append(arg)
             else:
                 assert False, "unrecognized option: %s" % arg
-        return self.makeFilter(timePoints, regexps, matchAll), remainOpts
+        return self.makeFilter(timePoints, regexps, allMatch), remainOpts
 
 
     def delete(self, args):
@@ -303,14 +306,14 @@ class App:
         applib.pageOut(records)
 
 
-    def makeFilter(self, timePoints, regexps, matchAll=False):
+    def makeFilter(self, timePoints, regexps, allMatch=False):
         """ Create a filter function for filtering
         the record with the given regular expression,
         and the time points. The filter function
         expects a Record instance object.
         """
         def logFilter(record, regexps=regexps,
-                    timePoints=timePoints, matchAll=matchAll):
+                    timePoints=timePoints, allMatch=allMatch):
             """ timeMatch is True if the time of the record is
             within any pair of the timePoints, regMatch is True
             if any of these fields of a record match the given
@@ -319,22 +322,58 @@ class App:
             only when both timeMatch and regMatch are True.
             """
             timeMatch = regMatch = True
+            # match time
             if timePoints:
                 t = record.time
                 x = [True for t1, t2 in timePoints if t1 <= t <= t2]
                 timeMatch = bool(x)
-            if regexps:
-                g = [record.author, record.subject, record.scene,
-                     record.people, record.tag]
-                if not record.binary:
-                    g.append(record.data)
 
-                if matchAll:
-                    matcher = lambda ps, f: len([1 for p in ps if re.search(p, f)]) == len(ps)
+            # match regular expressions
+            if regexps:
+                texts = [record.author, record.subject, record.scene,
+                         record.people, record.tag]
+                if not record.binary:
+                    texts.append(record.data)
+
+                if allMatch:
+                    def matcher(patterns, inTexts, record):
+                        for pat, flag, field in patterns:
+                            if field:   # match on a specific field
+                                texts = [getattr(record, field)]
+                            else:       # match on input fields
+                                texts = inTexts
+                            match = False
+                            for text in texts:
+                                # if the pattern matches any of
+                                # the text, the pattern is match
+                                if re.search(pat, text, flag):
+                                    match = True
+                                    break
+                            # if any pattern is not match
+                            # the whole failed.
+                            if not match:
+                                return False
+                        return True
                 else:
-                    matcher = lambda ps, f: bool([1 for p in ps if re.search(p, f)])
-                x = [True for f in g if matcher(regexps, f)]
-                regMatch = bool(x)
+                    def matcher(patterns, inTexts, record):
+                        for pat, flag, field in patterns:
+                            if field:   # match on a specific field
+                                texts = [getattr(record, field)]
+                            else:       # match on input fields
+                                texts = inTexts
+                            match = False
+                            for text in texts:
+                                # if the pattern matches any of
+                                # the text, the pattern is match
+                                if re.search(pat, text, flag):
+                                    match = True
+                                    break
+                            # if any pattern is match,
+                            # the whole is match.
+                            if match:
+                                return True
+                        return False
+                regMatch = matcher(regexps, texts, record)
             return timeMatch and regMatch
 
         return logFilter
@@ -365,10 +404,12 @@ pipe | %s add -m message
 %s list -t 0703:0909                -- 3rd Jul. through 9th Sep. this year
 %s list -t 20150101:today           -- from Jan. 1st 2015 up to today
 %s list -t 20160101,3:5,-2,12       -- any day matches the comma separated list
-%s list -Sre                        -- regular expression match for any text fields
-%s list -Sre -Sre                   -- match any of the regular expression
-%s list -Sre -Sre --all-match       -- match all of the regular expressions
-%s list -t 3:5 -Sre                 -- regular expression match for any text fields""" % ((bname,) * 16)
+%s list -S '/home/'                 -- any field matches the regular expression
+%s list -S '/home/i'                -- ignore case
+%s list -S 'scene/home/i'           -- the scene field matches the regular expression
+%s list -S<RE> -S<RE>               -- any of the REs matches any of the fields
+%s list -S<RE> -S<RE> --all-match   -- each of the REs matches any of the fields
+%s list -t 3:5 -S<RE>               -- match time and RE""" % ((bname,) * 18)
 
     delMsg = """%s del 297aacc                  -- delete log whose id starts with 297aacc
 %s del 297aacc 5e0df2c          -- delete multiple logs

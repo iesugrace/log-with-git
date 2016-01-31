@@ -2,6 +2,9 @@ import sys, os
 from subprocess import Popen, PIPE
 import subprocess
 import base64
+import string
+import re
+import time
 
 class InvalidTimeException(Exception): pass
 class InvalidCmdException(Exception): pass
@@ -151,6 +154,50 @@ def validateTime(timeStr):
             if re.search(regexp, x) is None:
                 return False
     return True
+
+
+def parsePattern(pstr):
+    """ Parse the regular expression pattern
+
+    Valid patterns:
+        1. /^DNS.*$/
+        2. /home/i          <-- flag
+        3. /home/id         <-- multiple flags
+        3. scene/home/i     <-- match field 'scene'
+
+    The first punctuation marks the start of the
+    pattern, the last same character marks the end
+    of the pattern, but they are not part of the
+    pattern. A valid pattern must have both two of
+    these characters. These is no need to escape
+    the same character (the mark) even if there are
+    some in the pattern.
+    Punctuations: !"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~
+    """
+    flags = {
+        'i': re.IGNORECASE,
+        'd': re.DOTALL,
+        'm': re.MULTILINE,
+    }
+    punct = '[' + re.escape(string.punctuation) + ']'
+    m = re.search(punct, pstr)
+    if not m:           # no mark
+        return None
+    mark = m.group(0)
+    sIdx = pstr.index(mark)
+    eIdx = pstr.rindex(mark)
+    if sIdx == eIdx:    # only one mark
+        return None
+    field   = pstr[:sIdx]
+    pattern = pstr[(sIdx+1):eIdx]
+    flagStr = pstr[(eIdx+1):]
+    flagVal = 0
+    for f in flagStr:
+        v = flags.get(f)
+        if not v:       # unsupported flag
+            return None
+        flagVal |= v
+    return (pattern, flagVal, field)
 
 
 def parseTime(timeStr):
