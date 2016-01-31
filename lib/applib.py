@@ -184,12 +184,12 @@ def parsePattern(pstr):
     punct = '[' + re.escape(string.punctuation) + ']'
     m = re.search(punct, pstr)
     if not m:           # no mark
-        raise InvalidReException("invalid pattern: %s" % regexp)
+        raise InvalidReException("invalid pattern: %s" % pstr)
     mark = m.group(0)
     sIdx = pstr.index(mark)
     eIdx = pstr.rindex(mark)
     if sIdx == eIdx:    # only one mark
-        raise InvalidReException("invalid pattern: %s" % regexp)
+        raise InvalidReException("invalid pattern: %s" % pstr)
     field   = pstr[:sIdx]
     pattern = pstr[(sIdx+1):eIdx]
     flagStr = pstr[(eIdx+1):]
@@ -197,7 +197,7 @@ def parsePattern(pstr):
     for f in flagStr:
         v = flags.get(f)
         if not v:       # unsupported flag
-            raise InvalidReException("invalid pattern: %s" % regexp)
+            raise InvalidReException("invalid pattern: %s" % pstr)
         flagVal |= v
     lField = field.lower()
     if lField and lField not in Record.fields:
