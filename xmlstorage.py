@@ -137,6 +137,8 @@ class XmlStorage:
                 path = XmlStorage.idToPath(oldRecord.id)
                 paths.append(path)
                 XmlStorage.__delete(None, path=path)
+            else:
+                return
         os.makedirs(absDirPath, exist_ok=True)
         path = os.path.join(absDirPath, record.id)
         code = XmlStorage.recordToSource(record)
