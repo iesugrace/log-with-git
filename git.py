@@ -47,8 +47,12 @@ class Git:
         os.chdir(self.gitWorkTree)
         res = applib.get_status_byte_output(cmd)
         if not res[0] and not quiet:
-            print('git command failed:', file=sys.stderr)
-            print(res[2].decode(), file=sys.stderr, end='')
+            msg = 'git command failed:'
+            if res[1]:
+                msg += ('\n' + res[1].decode())
+            if res[2]:
+                msg += ('\n' + res[2].decode())
+            print(msg, file=sys.stderr, end='')
         os.chdir(owd)
         return res
 
