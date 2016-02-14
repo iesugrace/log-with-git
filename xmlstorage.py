@@ -217,8 +217,23 @@ class XmlStorage:
 
         The paths returned by the git.last may contain
         paths that been deleted, it shall be ignored.
+
+        When a single record was collected multiple times,
+        the redundant shall be removed.  It can happen
+        when the record was changed multiple times (maybe
+        plus added action) within the range.
         """
-        paths   = XmlStorage.git.last(count)
+        vCount = count
+        while True:
+            ps = XmlStorage.git.last(vCount)
+            if len(set(ps)) == count:
+                break
+            else:
+                vCount += 1
+        paths = []
+        for p in ps:
+            if p not in paths:
+                paths.append(p)
         records = []
         for path in paths:
             path = os.path.join(XmlStorage.dataDir, path)
