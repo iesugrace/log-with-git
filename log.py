@@ -66,14 +66,15 @@ class Log:
         fields = Record.engine.convertFields(fields.items())
         return Record(**fields)
 
-    def collectLogs(self, filter=None):
+    def collectLogs(self, ids=None, filter=None):
         """ Walk through all log records, collect those
         that passed the filter function matching. Return
         a generator which yields Record instances.
         """
         if not filter:
             filter = lambda record: True
-        ids = Record.allIds()
+        if not ids:
+            ids = Record.allIds()
         for id in ids:
             record = Record.load(id)
             if filter(record):

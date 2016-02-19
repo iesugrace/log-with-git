@@ -15,8 +15,10 @@ sys.path.insert(0, lib_dir)
 
 from config import Config
 from log import Log
+from record import Record
 from timeutils import isodatetime
 import applib
+import interact
 
 class App:
     def __init__(self, configs):
@@ -63,7 +65,7 @@ class App:
                     timeArg = args.pop(0)
                 assert applib.validateTime(timeArg), ("invalid time: %s" % timeArg)
                 timePoints.extend(applib.parseTime(timeArg))
-            elif re.search('^-[1-9][0-9]*$', arg):
+            elif re.search('^(-[1-9][0-9]*)|([a-zA-Z0-9]{1,40})$', arg):
                 remainOpts.append(arg)
             else:
                 assert False, "unrecognized option: %s" % arg
@@ -298,7 +300,27 @@ class App:
         if limit and argc == 1:
             records = logger.recentLogs(limit)
         else:
-            records = logger.collectLogs(filterFunc)
+            if len(remainOpts): # assume that ids are given on the cmd line
+                ids = []
+                for partial_id in remainOpts:
+                    matchedIds = Record.matchId(partial_id)
+                    if not matchedIds:
+                        print('%s not found' % partial_id, file=sys.stderr)
+                        exit(1)
+                    elif len(matchedIds) > 1:
+                        while True:
+                            prompt   = 'multiple match, which one? '
+                            junk, id = interact.printAndPick(matchedIds, lineMode=True, prompt=prompt)
+                            if not id:
+                                print('invalid id: "%s"' % id)
+                            else:
+                                break
+                    else:
+                        id = matchedIds[0]
+                    ids.append(id)
+                records = logger.collectLogs(ids=ids)
+            else:
+                records = logger.collectLogs(filter=filterFunc)
             records = sorted(records, key=lambda x: x.time, reverse=True)
             if limit:
                 records = records[:limit]
@@ -392,6 +414,7 @@ pipe | %s add -m message
 %s add -g tag -t time -c scene -p people -m message""" % ((bname,) * 5)
 
     listMsg = """%s list                             -- list all
+%s list ead1 0c46                   -- list some specific records
 %s list -3                          -- the last three added/changed
 %s list -t 2016                     -- in 2016
 %s list -t 201601                   -- in Jan. 2016
@@ -408,7 +431,7 @@ pipe | %s add -m message
 %s list -S 'scene/home/i'           -- the scene field matches the regular expression
 %s list -S<RE> -S<RE>               -- any of the REs matches any of the fields
 %s list -S<RE> -S<RE> --all-match   -- each of the REs matches any of the fields
-%s list -t 3:5 -S<RE>               -- match time and RE""" % ((bname,) * 18)
+%s list -t 3:5 -S<RE>               -- match time and RE""" % ((bname,) * 19)
 
     delMsg = """%s del 297aacc                  -- delete log whose id starts with 297aacc
 %s del 297aacc 5e0df2c          -- delete multiple logs
