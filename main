@@ -288,8 +288,9 @@ class App:
             help('list')
             exit(0)
 
-        limit = None
-        argc  = len(args)
+        limit      = None
+        argc       = len(args)
+        remainOpts = []
         if len(args) == 0:  # list all records
             filterFunc = lambda record: True
         else:
