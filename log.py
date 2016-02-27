@@ -66,20 +66,6 @@ class Log:
         fields = Record.engine.convertFields(fields.items())
         return Record(**fields)
 
-    def collectLogs(self, ids=None, filter=None):
-        """ Walk through all log records, collect those
-        that passed the filter function matching. Return
-        a generator which yields Record instances.
-        """
-        if not filter:
-            filter = lambda record: True
-        if not ids:
-            ids = Record.allIds()
-        for id in ids:
-            record = Record.load(id)
-            if filter(record):
-                yield record
-
     def delete(self, ids, force=False, preAction=None, postAction=None):
         """ Delete the logs whose id is in 'ids', partial
         ID is acceptable, so that 297aacc is the equivalent
@@ -182,13 +168,6 @@ class Log:
         return False
 
 
-    def recentLogs(self, count):
-        """ Fetch the last 'count' logs that newly
-        added or changed, use git for better speed.
-        """
-        return Record.engine.lastLogs(count)
-
-
     """ Methods defined below are Record definition specific,
     subclasses shall redefine/extend these methods according
     to the Record fields definition, or add more others.
@@ -227,7 +206,6 @@ class Log:
         else:
             time      = time if time else timeutils.isodatetime()
             people    = people if people else ''
-            recentLog = None
             # take the recently used scene and
             # tag from the most recent log.
             if not scene:

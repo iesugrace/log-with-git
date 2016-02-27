@@ -2,6 +2,7 @@ import os
 from record import Record
 from timeutils import isodate
 import applib
+import re
 
 class XmlStorage:
     """ XML storage engine for the record
@@ -243,3 +244,139 @@ class XmlStorage:
                 record = XmlStorage.load(None, path=path)
                 records.append(record)
         return records
+
+    @staticmethod
+    def makeFilter(timePoints, regexps, allMatch=False):
+        """ Create a filter function for filtering
+        the record with the given regular expression,
+        and the time points. The filter function
+        expects a Record instance object.
+        """
+        def logFilter(record, regexps=regexps,
+                    timePoints=timePoints, allMatch=allMatch):
+            """ timeMatch is True if the time of the record is
+            within any pair of the timePoints, regMatch is True
+            if any of these fields of a record match the given
+            regular expression: subject, scene, people, tag,
+            and data if it's not of binary form. Return True
+            only when both timeMatch and regMatch are True.
+            """
+            timeMatch = regMatch = True
+            # match time
+            if timePoints:
+                t = record.time
+                x = [True for t1, t2 in timePoints if t1 <= t <= t2]
+                timeMatch = bool(x)
+
+            # match regular expressions
+            if regexps:
+                texts = [record.author, record.subject, record.scene,
+                         record.people, record.tag]
+                if not record.binary:
+                    texts.append(record.data)
+
+                if allMatch:
+                    def matcher(patterns, inTexts, record):
+                        for pat, flag, field in patterns:
+                            if field:   # match on a specific field
+                                texts = [getattr(record, field)]
+                            else:       # match on input fields
+                                texts = inTexts
+                            match = False
+                            for text in texts:
+                                # if the pattern matches any of
+                                # the text, the pattern is match
+                                if re.search(pat, text, flag):
+                                    match = True
+                                    break
+                            # if any pattern is not match
+                            # the whole failed.
+                            if not match:
+                                return False
+                        return True
+                else:
+                    def matcher(patterns, inTexts, record):
+                        for pat, flag, field in patterns:
+                            if field:   # match on a specific field
+                                texts = [getattr(record, field)]
+                            else:       # match on input fields
+                                texts = inTexts
+                            match = False
+                            for text in texts:
+                                # if the pattern matches any of
+                                # the text, the pattern is match
+                                if re.search(pat, text, flag):
+                                    match = True
+                                    break
+                            # if any pattern is match,
+                            # the whole is match.
+                            if match:
+                                return True
+                        return False
+                regMatch = matcher(regexps, texts, record)
+            return timeMatch and regMatch
+
+        return logFilter
+
+
+    @staticmethod
+    def searchLogs(fields, criteria, order=None):
+        """ Walk through all log records, collect those
+        that match the criteria. Return a generator which
+        yields a dict for all requested fields.
+        """
+        # do a git assisted search if the limit is the only criteria
+        if 'limit' in criteria:
+            ids   = criteria.get('ids')
+            times = criteria.get('times')
+            regxs = criteria.get('regxs')
+            patns = regxs.get('patterns') if regxs else None
+            if not times and not patns and not ids:
+                records = XmlStorage.lastLogs(criteria['limit'])
+                x = []
+                for record in records:
+                    x.append(dict([x for x in record.elements().items() if x[0] in fields]))
+                return x
+
+        # the filter function
+        if criteria and (criteria.get('times') or criteria.get('regxs')):
+            times = criteria.get('times', [])
+            regxs = criteria.get('regxs')
+            allMatch = regxs.get('allMatch', False) if regxs else False
+            patterns = regxs.get('patterns') if regxs else None
+            filter = XmlStorage.makeFilter(times, patterns, allMatch)
+        else:
+            filter = lambda record: True
+
+        # the IDs
+        ids = criteria.get('ids')
+        if not ids:
+            ids = Record.allIds()
+        else:
+            completIds = []
+            for id in ids:
+                completIds.extend(Record.matchId(id))
+            ids = completIds
+
+        if not order:
+            x = []
+            for id in ids:
+                record = Record.load(id)
+                if not record:
+                    continue
+                if filter(record):
+                    x.append(dict([x for x in record.elements().items() if x[0] in fields]))
+            return x
+        else:
+            x = []
+            for id in ids:
+                record = Record.load(id)
+                if not record:
+                    continue
+                if filter(record):
+                    x.append(record)
+            field = order['by']
+            key   = lambda r: getattr(r, field)
+            x.sort(key=key, reverse=(not order['ascending']))
+            x = [dict([i for i in r.elements().items() if i[0] in fields]) for r in x]
+            return x

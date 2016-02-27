@@ -9,6 +9,7 @@ from record import Record
 
 class InvalidTimeException(Exception): pass
 class InvalidReException(Exception): pass
+class InvalidFieldException(Exception): pass
 class InvalidCmdException(Exception): pass
 class NotTerminalException(Exception): pass
 
@@ -113,29 +114,38 @@ def makeOneRequest(name, default, datatype, reader, desc):
                 default=default, reader=actual_reader)
 
 
-def pageOut(records):
+def pageOut(records_data, formater, color=True):
     """ Apply color to the text, pipe the
     text to a pager, for a better viewing.
+    the 'records_data' is a generator that
+    yields a dict.
     """
-    def colorize(record):
+    if not records_data:
+        return
+
+    def colorize(text):
         """ Render the first line
         """
-        text = str(record)
-        if os.isatty(sys.stdout.fileno()):
-            pos     = text.find('\n')
-            id      = text[:pos]
-            cFormat = '\033[0;33m%s\033[0m'
-            id      = cFormat % id
-            text    = id + text[pos:]
+        fmt   = '\033[0;33m%s\033[0m'
+        pos   = text.find('\n')
+        first = fmt % text[:pos]
+        text  = first + text[pos:]
         return text
 
-    if not records:
+    if color and os.isatty(sys.stdout.fileno()):
+        colorFunc = colorize
+    else:
+        colorFunc = lambda x: x
+
+    pager = Pager(['-XRF'])
+    itr   = iter(records_data)
+    try:
+        first = next(itr)
+        pager.write(colorFunc(formater(first)), isBytes=False)
+    except StopIteration:
         return
-    lastOne = records.pop()
-    pager   = Pager(['-XRF'])
-    for record in records:
-        pager.write(colorize(record), '\n\n', isBytes=False)
-    pager.write(colorize(lastOne), '\n', isBytes=False)
+    for data in itr:
+        pager.write('\n', colorFunc(formater(data)), isBytes=False)
     pager.go()
 
 
@@ -200,9 +210,14 @@ def parsePattern(pstr):
             raise InvalidReException("invalid pattern: %s" % pstr)
         flagVal |= v
     lField = field.lower()
-    if lField and lField not in Record.fields:
-        raise InvalidReException("no such field: %s" % field)
+    if lField:
+        checkFieldName(lField)
     return (pattern, flagVal, lField)
+
+
+def checkFieldName(name):
+    if name not in Record.fields:
+        raise InvalidFieldException("no such field: %s" % name)
 
 
 def parseTime(timeStr):

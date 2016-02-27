@@ -59,34 +59,69 @@ class Record(BasicRecord):
         'binary':  {'order': 9, 'conv': [(lambda s: s == 'true'),
                          (lambda v: ['false', 'true'][bool(v)])]},
     }
-
     sep = ':'  # separator between key and value
 
     def __repr__(self):
+        data = self.elements()
+        return Record.defaultFormater(data)
+
+    @staticmethod
+    def defaultFormater(data):
+        keys  = ['Author', 'Time', 'Scene', 'People', 'Tag']
+        conv  = lambda x: x
+        funcs = [conv, isodatetime] + [conv] * 6
+        return Record.formatRecord(keys, funcs, data) + '\n'
+
+    @staticmethod
+    def formatRecord(keys, funcs, data):
         """ Class specific representation method
-        Subclass shall redefine this method.
+        Subclass shall redefine the methods called
+        by this method.
         """
-        keys   = ['Author', 'Time', 'Scene', 'People', 'Tag']
-        c      = lambda x: x
-        cvtMap = zip(keys, [c, isodatetime] + [c] * 6)
-        values = [c(getattr(self, k.lower())) for k, c in cvtMap]
-        keys   = [x + self.sep for x in keys]   # append the separator
+        text = Record.formatFields(keys, funcs, data)
+        text = Record.formatPrependId(text, data)
+        text = Record.formatAppendSubject(text, data)
+        text = Record.formatAppendData(text, data)
+        return text
+
+    @staticmethod
+    def formatAppendData(text, data):
+        if data.get('binary', False):
+            x = "-->> Binary data <<--"
+        else:
+            x = data.get('data', '')
+        if x:
+            text = '%s\n\n%s' % (text, x.rstrip('\n'))
+        return text
+
+    @staticmethod
+    def formatAppendSubject(text, data):
+        """ Append subject to the text
+        """
+        return '%s\n\n%s' % (text, data.get('subject', ''))
+
+    @staticmethod
+    def formatPrependId(text, data):
+        """ Prepend ID to the text
+        """
+        id = data.get('id', 'N/A')
+        return 'log %s\n%s' % (id, text)
+
+    @staticmethod
+    def formatFields(keys, funcs, data):
+        """ Format a text string of the fields
+        keys is the fields' names.
+        """
+        cvtMap = zip(keys, funcs)
+        values = [c(data.get(k.lower())) for k, c in cvtMap]
+        keys   = [x + Record.sep for x in keys]   # append the separator
         maxlen = max([len(x) for x in keys])
         fmt    = '%%-%ds %%s\n' % maxlen
         text   = ''
         for k, v in zip(keys, values):
             if v:
                 text += fmt % (k, v)
-        id     = self.id if self.id else 'N/A'
-        text   = 'log %s\n%s' % (id, text[:-1])
-        text   = '%s\n\n%s' % (text, self.subject)
-        if self.binary:
-            data = "-->> Binary data <<--"
-        else:
-            data = self.data
-        if data:
-            text = '%s\n\n%s' % (text, data.rstrip('\n'))
-        return text
+        return text[:-1]
 
     def save(self, oldRecord=None):
         """ Instance data persistent method

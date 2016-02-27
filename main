@@ -18,7 +18,6 @@ from log import Log
 from record import Record
 from timeutils import isodatetime
 import applib
-import interact
 
 class App:
     def __init__(self, configs):
@@ -41,10 +40,13 @@ class App:
     def procArgs(self, args):
         """ Process the arguments, return a filter function.
         """
-        regexps    = []
         allMatch   = False
-        timePoints = []
+        ascending  = True
+        patterns   = []
+        times      = []
         remainOpts = []
+        fmt        = None
+        orderBy    = None
         while args:
             arg = args.pop(0)
             if arg[:2] == '-S':     # regular expression
@@ -53,10 +55,20 @@ class App:
                 else:
                     assert len(args) > 0, "need argument for -S option"
                     regexp = args.pop(0)
-                patter = applib.parsePattern(regexp)
-                regexps.append(patter)
+                pattern = applib.parsePattern(regexp)
+                patterns.append(pattern)
             elif arg == '--all-match':  # affects the RE evaluation
                 allMatch = True
+            elif arg[:6] == '--sort':
+                if arg.startswith('--sort='):
+                    orderBy = arg[7:]
+                else:
+                    assert len(args) > 0, "need argument for --sort option"
+                    orderBy = args.pop(0)
+                orderBy = orderBy.lower()
+                applib.checkFieldName(orderBy)
+            elif arg == '-r':
+                ascending = False
             elif arg[:2] == '-t':   # time
                 if len(arg) > 2:
                     timeArg = arg[2:]
@@ -64,12 +76,26 @@ class App:
                     assert len(args) > 0, "need argument for -t option"
                     timeArg = args.pop(0)
                 assert applib.validateTime(timeArg), ("invalid time: %s" % timeArg)
-                timePoints.extend(applib.parseTime(timeArg))
+                times.extend(applib.parseTime(timeArg))
+            elif arg[:2] == '-f':   # format
+                if len(arg) > 2:
+                    fmt = arg[2:]
+                else:
+                    assert len(args) > 0, "need argument for -f option"
+                    fmt = args.pop(0)
             elif re.search('^(-[1-9][0-9]*)|([a-zA-Z0-9]{1,40})$', arg):
                 remainOpts.append(arg)
             else:
                 assert False, "unrecognized option: %s" % arg
-        return self.makeFilter(timePoints, regexps, allMatch), remainOpts
+
+        limit = self.extractLimitArgs(remainOpts)
+        ids   = remainOpts
+        regxs = {'allMatch': allMatch, 'patterns': patterns} if patterns else None
+        times = times if times else None
+        order = {'by': orderBy, 'ascending': ascending} if orderBy else None
+        res   = dict(regxs=regxs, times=times, limit=limit,
+                     ids=ids, fmt=fmt, order=order)
+        return res
 
 
     def delete(self, args):
@@ -288,117 +314,64 @@ class App:
             help('list')
             exit(0)
 
-        limit      = None
-        argc       = len(args)
-        remainOpts = []
-        if len(args) == 0:  # list all records
-            filterFunc = lambda record: True
-        else:
-            filterFunc, remainOpts = self.procArgs(args)
-            limit = self.extractLimitArgs(remainOpts)
+        criteria = {}   # search criteria
+        order    = None # order criteria
+        fmt      = None # what and how to display
+        if len(args) > 0:
+            x = self.procArgs(args)
+            criteria['times'] = x['times']
+            criteria['regxs'] = x['regxs']
+            criteria['limit'] = x['limit']
+            criteria['ids']   = x['ids']
+            fmt   = x['fmt']
+            order = x['order']
         logger  = Log(self.configs)
-        # only use recentLogs when no other filter options provided
-        if limit and argc == 1:
-            records = logger.recentLogs(limit)
-        else:
-            if len(remainOpts): # assume that ids are given on the cmd line
-                ids = []
-                for partial_id in remainOpts:
-                    matchedIds = Record.matchId(partial_id)
-                    if not matchedIds:
-                        print('%s not found' % partial_id, file=sys.stderr)
-                        exit(1)
-                    elif len(matchedIds) > 1:
-                        while True:
-                            prompt   = 'multiple match, which one? '
-                            junk, id = interact.printAndPick(matchedIds, lineMode=True, prompt=prompt)
-                            if not id:
-                                print('invalid id: "%s"' % id)
-                            else:
-                                break
-                    else:
-                        id = matchedIds[0]
-                    ids.append(id)
-                records = logger.collectLogs(ids=ids)
-            else:
-                records = logger.collectLogs(filter=filterFunc)
-            records = sorted(records, key=lambda x: x.time, reverse=True)
-            if limit:
-                records = records[:limit]
-        applib.pageOut(records)
+        fields, formater = self.parseDisplayFormat(fmt)
+        result  = Record.engine.searchLogs(fields, criteria, order)
+        color   = False if fmt else True    # no color if display format specified
+        applib.pageOut(result, formater, color)
 
 
-    def makeFilter(self, timePoints, regexps, allMatch=False):
-        """ Create a filter function for filtering
-        the record with the given regular expression,
-        and the time points. The filter function
-        expects a Record instance object.
+    def parseDisplayFormat(self, fmt):
+        """ Parse the string 'fmt', return 'fields' which
+        is the fields to collect, and fmtStr which is the
+        format for displaying the result. If the fmt is
+        None, collect all fields of Record, and the default
+        display format applies.
         """
-        def logFilter(record, regexps=regexps,
-                    timePoints=timePoints, allMatch=allMatch):
-            """ timeMatch is True if the time of the record is
-            within any pair of the timePoints, regMatch is True
-            if any of these fields of a record match the given
-            regular expression: subject, scene, people, tag,
-            and data if it's not of binary form. Return True
-            only when both timeMatch and regMatch are True.
-            """
-            timeMatch = regMatch = True
-            # match time
-            if timePoints:
-                t = record.time
-                x = [True for t1, t2 in timePoints if t1 <= t <= t2]
-                timeMatch = bool(x)
-
-            # match regular expressions
-            if regexps:
-                texts = [record.author, record.subject, record.scene,
-                         record.people, record.tag]
-                if not record.binary:
-                    texts.append(record.data)
-
-                if allMatch:
-                    def matcher(patterns, inTexts, record):
-                        for pat, flag, field in patterns:
-                            if field:   # match on a specific field
-                                texts = [getattr(record, field)]
-                            else:       # match on input fields
-                                texts = inTexts
-                            match = False
-                            for text in texts:
-                                # if the pattern matches any of
-                                # the text, the pattern is match
-                                if re.search(pat, text, flag):
-                                    match = True
-                                    break
-                            # if any pattern is not match
-                            # the whole failed.
-                            if not match:
-                                return False
-                        return True
-                else:
-                    def matcher(patterns, inTexts, record):
-                        for pat, flag, field in patterns:
-                            if field:   # match on a specific field
-                                texts = [getattr(record, field)]
-                            else:       # match on input fields
-                                texts = inTexts
-                            match = False
-                            for text in texts:
-                                # if the pattern matches any of
-                                # the text, the pattern is match
-                                if re.search(pat, text, flag):
-                                    match = True
-                                    break
-                            # if any pattern is match,
-                            # the whole is match.
-                            if match:
-                                return True
-                        return False
-                regMatch = matcher(regexps, texts, record)
-            return timeMatch and regMatch
-
-        return logFilter
+        if not fmt:
+            fields   = list(Record.fields.keys())
+            formater = Record.defaultFormater
+        else:
+            shortId = lambda s: s[:7]
+            fieldMaps = {
+                '%i': ['id', shortId],
+                '%I': 'id',
+                '%s': 'subject',
+                '%a': 'author',
+                '%t': ['time', isodatetime],
+                '%c': 'scene',
+                '%p': 'people',
+                '%g': 'tag',
+                '%d': 'data',
+            }
+            fields   = []
+            fmtStr   = fmt
+            convList = []
+            for k, field in fieldMaps.items():
+                if k in fmtStr:
+                    if isinstance(field, list):
+                        field, conv = field
+                        if conv:
+                            convList.append((field, conv))
+                    fields.append(field)
+                    fmtStr = fmtStr.replace(k, '{%s}' % field)
+            def formater(data):
+                if convList:
+                    for key, conv in convList:
+                        data[key] = conv(data[key])
+                return fmtStr.format(**data)
+        return (fields, formater)
 
 
 def help(cate=None, ofile=sys.stdout):
@@ -432,7 +405,9 @@ pipe | %s add -m message
 %s list -S 'scene/home/i'           -- the scene field matches the regular expression
 %s list -S<RE> -S<RE>               -- any of the REs matches any of the fields
 %s list -S<RE> -S<RE> --all-match   -- each of the REs matches any of the fields
-%s list -t 3:5 -S<RE>               -- match time and RE""" % ((bname,) * 19)
+%s list -f '%i %t %s'               -- specify the display format
+%s list --sort time -r              -- sort by time, reverse
+%s list -t 3:5 -S<RE>               -- match time and RE""" % ((bname,) * 21)
 
     delMsg = """%s del 297aacc                  -- delete log whose id starts with 297aacc
 %s del 297aacc 5e0df2c          -- delete multiple logs
@@ -531,6 +506,7 @@ if __name__ == '__main__':
     except (AssertionError,
             applib.InvalidTimeException,
             applib.InvalidReException,
+            applib.InvalidFieldException,
             applib.InvalidCmdException,
             applib.NotTerminalException) as e:
         print(e, file=sys.stderr)
