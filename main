@@ -16,7 +16,7 @@ sys.path.insert(0, lib_dir)
 from config import Config
 from log import Log
 from record import Record
-from timeutils import isodatetime
+from timeutils import isodatetime, isodate
 import applib
 
 class App:
@@ -39,11 +39,20 @@ class App:
 
     def procArgs(self, args):
         """ Process the arguments, return a filter function.
+        -t is for the 'time' field of the record,
+        -mt is for the 'mtime' field, it ok to specify
+        multiple time options in the command line, but
+        if -t and -mt are used together, the last one
+        of them determines the time type, that is:
+            $ cmd list -t -1 -mt -2
+        is equivalent of
+            $ cmd list -mt -1 -mt -2
         """
         allMatch   = False
         ascending  = True
         patterns   = []
         times      = []
+        timeField  = 'time'
         remainOpts = []
         fmt        = None
         orderBy    = None
@@ -77,6 +86,16 @@ class App:
                     timeArg = args.pop(0)
                 assert applib.validateTime(timeArg), ("invalid time: %s" % timeArg)
                 times.extend(applib.parseTime(timeArg))
+                timeField = 'time'
+            elif arg[:3] == '-mt':  # mtime
+                if len(arg) > 3:
+                    timeArg = arg[3:]
+                else:
+                    assert len(args) > 0, "need argument for -mt option"
+                    timeArg = args.pop(0)
+                assert applib.validateTime(timeArg), ("invalid time: %s" % timeArg)
+                times.extend(applib.parseTime(timeArg))
+                timeField = 'mtime'
             elif arg[:2] == '-f':   # format
                 if len(arg) > 2:
                     fmt = arg[2:]
@@ -91,7 +110,7 @@ class App:
         limit = self.extractLimitArgs(remainOpts)
         ids   = remainOpts
         regxs = {'allMatch': allMatch, 'patterns': patterns} if patterns else None
-        times = times if times else None
+        times = {'field': timeField, 'points': times} if times else None
         order = {'by': orderBy, 'ascending': ascending} if orderBy else None
         res   = dict(regxs=regxs, times=times, limit=limit,
                      ids=ids, fmt=fmt, order=order)
@@ -338,38 +357,52 @@ class App:
         format for displaying the result. If the fmt is
         None, collect all fields of Record, and the default
         display format applies.
+
+        The order of 'fieldMaps' is significant when do
+        the replacing, if two flags have identical beginning,
+        like %t and %td, the longer shall be processed first,
+        So we sort it by to the length of the key.
         """
         if not fmt:
             fields   = list(Record.fields.keys())
             formater = Record.defaultFormater
         else:
-            shortId = lambda s: s[:7]
+            shortId   = lambda s: s[:7]
+            shortSbj  = lambda s: s[:10]
+            # flag: [fieldName, flagReplacement, converter]
             fieldMaps = {
-                '%i': ['id', shortId],
-                '%I': 'id',
-                '%s': 'subject',
-                '%a': 'author',
-                '%t': ['time', isodatetime],
-                '%c': 'scene',
-                '%p': 'people',
-                '%g': 'tag',
-                '%d': 'data',
+                '%i'  : ['id', 'id', shortId],
+                '%I'  : ['id', 'fullId', None],
+                '%s'  : ['subject', 'subject', None],
+                '%S'  : ['subject', 'shortSubject', shortSbj],
+                '%a'  : ['author', 'author', None],
+                '%t'  : ['time', 'time', isodatetime],
+                '%td' : ['time', 'dateOfTime', isodate],
+                '%mt' : ['mtime', 'mtime', isodatetime],
+                '%mtd': ['mtime', 'dateOfMTime', isodate],
+                '%c'  : ['scene', 'scene', None],
+                '%p'  : ['people', 'people', None],
+                '%g'  : ['tag', 'tag', None],
+                '%d'  : ['data', 'data', None],
             }
-            fields   = []
+            fields   = set()
             fmtStr   = fmt
             convList = []
-            for k, field in fieldMaps.items():
+            key      = lambda x: len(x[0])
+            fieldMaps = sorted(fieldMaps.items(), key=key, reverse=True)
+            for k, desc in fieldMaps:
                 if k in fmtStr:
-                    if isinstance(field, list):
-                        field, conv = field
-                        if conv:
-                            convList.append((field, conv))
-                    fields.append(field)
-                    fmtStr = fmtStr.replace(k, '{%s}' % field)
+                    field, replacement, conv = desc
+                    convList.append(desc)
+                    fields.add(field)
+                    fmtStr = fmtStr.replace(k, '{%s}' % replacement)
             def formater(data):
                 if convList:
-                    for key, conv in convList:
-                        data[key] = conv(data[key])
+                    for field, replacement, conv in convList:
+                        if conv:
+                            data[replacement] = conv(data[field])
+                        else:
+                            data[replacement] = data[field]
                 return fmtStr.format(**data)
         return (fields, formater)
 
@@ -400,14 +433,15 @@ pipe | %s add -m message
 %s list -t 0703:0909                -- 3rd Jul. through 9th Sep. this year
 %s list -t 20150101:today           -- from Jan. 1st 2015 up to today
 %s list -t 20160101,3:5,-2,12       -- any day matches the comma separated list
+%s list -mt :                       -- modify time is used instead of time
 %s list -S '/home/'                 -- any field matches the regular expression
 %s list -S '/home/i'                -- ignore case
 %s list -S 'scene/home/i'           -- the scene field matches the regular expression
 %s list -S<RE> -S<RE>               -- any of the REs matches any of the fields
 %s list -S<RE> -S<RE> --all-match   -- each of the REs matches any of the fields
-%s list -f '%i %t %s'               -- specify the display format
+%s list -f '%%i: (%%t, %%mt) %%s'       -- specify the display format
 %s list --sort time -r              -- sort by time, reverse
-%s list -t 3:5 -S<RE>               -- match time and RE""" % ((bname,) * 21)
+%s list -t 3:5 -S<RE>               -- match time and RE""" % ((bname,) * 22)
 
     delMsg = """%s del 297aacc                  -- delete log whose id starts with 297aacc
 %s del 297aacc 5e0df2c          -- delete multiple logs

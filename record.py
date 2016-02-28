@@ -52,11 +52,13 @@ class Record(BasicRecord):
         'author':  {'required': True, 'order': 3},
         'time':    {'required': True, 'order': 4,
                     'conv': [strtosecond, isodatetime]},
-        'scene':   {'order': 5},
-        'people':  {'order': 6},
-        'tag':     {'order': 7},
-        'data':    {'order': 8},
-        'binary':  {'order': 9, 'conv': [(lambda s: s == 'true'),
+        'mtime':   {'required': True, 'order': 5,
+                    'conv': [strtosecond, isodatetime]},
+        'scene':   {'order': 6},
+        'people':  {'order': 7},
+        'tag':     {'order': 8},
+        'data':    {'order': 9},
+        'binary':  {'order': 10, 'conv': [(lambda s: s == 'true'),
                          (lambda v: ['false', 'true'][bool(v)])]},
     }
     sep = ':'  # separator between key and value
@@ -67,9 +69,9 @@ class Record(BasicRecord):
 
     @staticmethod
     def defaultFormater(data):
-        keys  = ['Author', 'Time', 'Scene', 'People', 'Tag']
+        keys  = ['Author', 'Time', 'MTime', 'Scene', 'People', 'Tag']
         conv  = lambda x: x
-        funcs = [conv, isodatetime] + [conv] * 6
+        funcs = [conv, isodatetime, isodatetime] + [conv] * 6
         return Record.formatRecord(keys, funcs, data) + '\n'
 
     @staticmethod

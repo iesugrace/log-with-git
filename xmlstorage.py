@@ -246,26 +246,26 @@ class XmlStorage:
         return records
 
     @staticmethod
-    def makeFilter(timePoints, regexps, allMatch=False):
+    def makeFilter(tmField, tmPoints, regexps, allMatch=False):
         """ Create a filter function for filtering
         the record with the given regular expression,
         and the time points. The filter function
         expects a Record instance object.
         """
-        def logFilter(record, regexps=regexps,
-                    timePoints=timePoints, allMatch=allMatch):
+        def logFilter(record, regexps=regexps, allMatch=allMatch,
+                        tmField=tmField, tmPoints=tmPoints):
             """ timeMatch is True if the time of the record is
-            within any pair of the timePoints, regMatch is True
-            if any of these fields of a record match the given
-            regular expression: subject, scene, people, tag,
-            and data if it's not of binary form. Return True
-            only when both timeMatch and regMatch are True.
+            within any pair of the tmPoints, regMatch is True
+            if any of the provided regular expressions matches
+            any field of a record, or all of them match any
+            field of a record when allMatch is True. Return
+            True only when both timeMatch and regMatch are True.
             """
             timeMatch = regMatch = True
             # match time
-            if timePoints:
-                t = record.time
-                x = [True for t1, t2 in timePoints if t1 <= t <= t2]
+            if tmPoints:
+                t = getattr(record, tmField)
+                x = [True for t1, t2 in tmPoints if t1 <= t <= t2]
                 timeMatch = bool(x)
 
             # match regular expressions
@@ -338,9 +338,10 @@ class XmlStorage:
         if criteria.get('limit'):
             ids   = criteria.get('ids')
             times = criteria.get('times')
+            tpnts = times.get('points') if times else None
             regxs = criteria.get('regxs')
             patns = regxs.get('patterns') if regxs else None
-            if not times and not patns and not ids:
+            if not tpnts and not patns and not ids:
                 records = XmlStorage.lastLogs(criteria['limit'])
                 if order:
                     sortRecords(order['by'], records, reverse=(not order['ascending']))
@@ -348,11 +349,13 @@ class XmlStorage:
 
         # create the filter function
         if criteria and (criteria.get('times') or criteria.get('regxs')):
-            times = criteria.get('times', [])
-            regxs = criteria.get('regxs')
+            times    = criteria.get('times')
+            tmField  = times.get('field') if times else None
+            tmPoints = times.get('points', []) if times else []
+            regxs    = criteria.get('regxs')
             allMatch = regxs.get('allMatch', False) if regxs else False
             patterns = regxs.get('patterns') if regxs else None
-            filter = XmlStorage.makeFilter(times, patterns, allMatch)
+            filter   = XmlStorage.makeFilter(tmField, tmPoints, patterns, allMatch)
         else:
             filter = lambda record: True
 

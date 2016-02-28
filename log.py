@@ -3,7 +3,7 @@ from git import Git
 from record import Record
 from xmlstorage  import XmlStorage
 import applib
-import timeutils
+from timeutils import isodatetime
 from common import editContent
 import interact
 
@@ -40,6 +40,7 @@ class Log:
         author = '%s <%s>' % (self.config['authorName'],
                               self.config['authorEmail'])
         fields['author'] = author
+        fields['mtime']  = isodatetime()    # current time for mtime
         assert self.checkRequirement(**fields), "field data not sufficient"
         fields = Record.engine.convertFields(fields.items())
         record = Record(**fields)
@@ -62,6 +63,7 @@ class Log:
         fields = self.collectLogInfo(**args)
         fields['id']     = id
         fields['author'] = author
+        fields['mtime']  = isodatetime()    # update with current time
         assert self.checkRequirement(**fields), "field data not sufficient"
         fields = Record.engine.convertFields(fields.items())
         return Record(**fields)
@@ -204,7 +206,7 @@ class Log:
             people   =  record.people
             tag      =  record.tag
         else:
-            time      = time if time else timeutils.isodatetime()
+            time      = time if time else isodatetime()
             people    = people if people else ''
             # take the recently used scene and
             # tag from the most recent log.
