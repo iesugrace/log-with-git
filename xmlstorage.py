@@ -325,20 +325,28 @@ class XmlStorage:
         that match the criteria. Return a generator which
         yields a dict for all requested fields.
         """
+        def sortRecords(by, records, reverse=False):
+            key = lambda record: getattr(record, by)
+            records.sort(key=key, reverse=reverse)
+
+        def transRecords(records, fields):
+            for r in records:
+                d = dict([i for i in r.elements().items() if i[0] in fields])
+                yield d
+
         # do a git assisted search if the limit is the only criteria
-        if 'limit' in criteria:
+        if criteria.get('limit'):
             ids   = criteria.get('ids')
             times = criteria.get('times')
             regxs = criteria.get('regxs')
             patns = regxs.get('patterns') if regxs else None
             if not times and not patns and not ids:
                 records = XmlStorage.lastLogs(criteria['limit'])
-                x = []
-                for record in records:
-                    x.append(dict([x for x in record.elements().items() if x[0] in fields]))
-                return x
+                if order:
+                    sortRecords(order['by'], records, reverse=(not order['ascending']))
+                return transRecords(records, fields)
 
-        # the filter function
+        # create the filter function
         if criteria and (criteria.get('times') or criteria.get('regxs')):
             times = criteria.get('times', [])
             regxs = criteria.get('regxs')
@@ -353,30 +361,19 @@ class XmlStorage:
         if not ids:
             ids = Record.allIds()
         else:
-            completIds = []
+            completeIds = []
             for id in ids:
-                completIds.extend(Record.matchId(id))
-            ids = completIds
+                completeIds.extend(XmlStorage.matchId(id))
+            ids = completeIds
 
-        if not order:
-            x = []
-            for id in ids:
-                record = Record.load(id)
-                if not record:
-                    continue
-                if filter(record):
-                    x.append(dict([x for x in record.elements().items() if x[0] in fields]))
-            return x
-        else:
-            x = []
-            for id in ids:
-                record = Record.load(id)
-                if not record:
-                    continue
-                if filter(record):
-                    x.append(record)
-            field = order['by']
-            key   = lambda r: getattr(r, field)
-            x.sort(key=key, reverse=(not order['ascending']))
-            x = [dict([i for i in r.elements().items() if i[0] in fields]) for r in x]
-            return x
+        # collect the records
+        records = []
+        for id in ids:
+            x = Record.load(id)
+            if not x:
+                continue
+            if filter(x):
+                records.append(x)
+        if order:
+            sortRecords(order['by'], records, reverse=(not order['ascending']))
+        return transRecords(records, fields)
