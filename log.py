@@ -1,11 +1,78 @@
-import os, sys
+import sys
 from git import Git
 from record import Record
 from xmlstorage  import XmlStorage
+from sqlitestorage import SqliteStorage
 import applib
 from timeutils import isodatetime
 from common import editContent
 import interact
+
+class Engine:
+    """ Management class for engines
+    Support to delegate task to multiple engines.
+    For better read performance, all read requests
+    will be routed to sqlite engine, write requests
+    to both. The xml engine serves for assisting
+    Git operations.
+    """
+
+    engines = {
+        'xml':    XmlStorage,
+        'sqlite': SqliteStorage,
+    }
+
+    def __getattr__(self, name):
+        """ All read actions routed to sqlite
+        """
+        attrList = ['lastLog',
+                    'lastLogs',
+                    'matchId',
+                    'allIds',
+                    'load',
+                    'searchLogs',
+                   ]
+        if name in attrList:
+            return getattr(self.engines['sqlite'], name)
+
+    def save(self, record, oldRecord=None):
+        """ Save record to all engines
+        Procedure:
+            1. save to sqlite engine, but not commit
+            2. save to xml engine (git commit created here)
+            3. commit in sqlite if xml engine return success
+               or do a roll back
+        """
+        r = self.engines['sqlite'].save(record, oldRecord, commit=False)
+        if r:
+            record.id = r.id    # when add, the ID will be new generated.
+            r = self.engines['xml'].save(record, oldRecord)
+            if r:
+                self.engines['sqlite'].commit()
+            else:
+                print('xml engine failed, roll back sqlite engine actions',
+                        file=sys.stderr)
+                self.engines['sqlite'].rollback()
+
+
+    def delete(self, ids, preAction, postAction):
+        """ Delete records from all engines
+        Procedure:
+            1. delete from sqlite engine, but not commit
+            2. delete from xml engine (git commit created here)
+            3. commit in sqlite if xml engine return success
+               or do a roll back
+        """
+        s = self.engines['sqlite'].delete(ids, preAction, postAction, commit=False)
+        if s:
+            s = self.engines['xml'].delete(ids) # no need to confirm/inform again
+            if s:
+                self.engines['sqlite'].commit()
+            else:
+                print('xml engine failed, roll back sqlite engine actions',
+                        file=sys.stderr)
+                self.engines['sqlite'].rollback()
+
 
 class Log:
     """ Log management class
@@ -14,13 +81,14 @@ class Log:
     def __init__(self, config):
         self.config = config
         dataDir     = config['dataDir']
-        os.makedirs(dataDir, exist_ok=True)
-        self.git    = Git(dataDir)
 
         # Setup and register storage engine
-        XmlStorage.dataDir = dataDir
-        XmlStorage.git     = self.git
-        Record.engine      = XmlStorage
+        engine   = Engine()
+        eXml     = engine.engines['xml']
+        eSqlite  = engine.engines['sqlite']
+        self.git = eXml.setup(dataDir)   # Xml storage engine uses git
+        eSqlite.setup(dataDir)
+        Record.engine = engine
 
     def lastLog(self):
         """ Fetch the most recent log record
@@ -42,7 +110,7 @@ class Log:
         fields['author'] = author
         fields['mtime']  = isodatetime()    # current time for mtime
         assert self.checkRequirement(**fields), "field data not sufficient"
-        fields = Record.engine.convertFields(fields.items())
+        fields = Record.convertFields(fields.items())
         record = Record(**fields)
         record.save()
 
@@ -65,7 +133,7 @@ class Log:
         fields['author'] = author
         fields['mtime']  = isodatetime()    # update with current time
         assert self.checkRequirement(**fields), "field data not sufficient"
-        fields = Record.engine.convertFields(fields.items())
+        fields = Record.convertFields(fields.items())
         return Record(**fields)
 
     def delete(self, ids, force=False, preAction=None, postAction=None):
@@ -82,7 +150,7 @@ class Log:
         if not postAction: postAction = self.postActionOfDelete
         Record.engine.delete(ids, preAction, postAction)
 
-    def edit(self, id, preAction=None):
+    def edit(self, id):
         """ Edit the log of the given id
         """
         ids = Record.matchId(id)
@@ -96,10 +164,7 @@ class Log:
         else:
             id = ids[0]
 
-        if not preAction:
-            preAction = lambda x: x
         oldRecord = Record.load(id)
-        items = oldRecord.elements().items()
         elements  = dict(oldRecord.elements())
         elements  = self.preActionOfEdit(elements)
         newRecord = self.makeLogEntry(**elements)

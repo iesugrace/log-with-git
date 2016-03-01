@@ -1,12 +1,22 @@
 import os
 from record import Record
 from timeutils import isodate
+from git import Git
 import applib
 import re
 
 class XmlStorage:
     """ XML storage engine for the record
     """
+
+    @staticmethod
+    def setup(dataDir):
+        engineDir = os.path.join(dataDir, 'xml')
+        os.makedirs(engineDir, exist_ok=True)
+        XmlStorage.dataDir = engineDir
+        XmlStorage.git     = Git(engineDir)
+        return XmlStorage.git
+
     @staticmethod
     def sourceToDom(code):
         """ Parse the raw record data which is XML code,
@@ -36,27 +46,8 @@ class XmlStorage:
                 textNode = node.firstChild
                 data = textNode.data if textNode else ''
                 fields[name] = data
-        fields = XmlStorage.convertFields(fields.items())
+        fields = Record.convertFields(fields.items())
         return Record(**fields)
-
-    @staticmethod
-    def convertFields(items, toRecord=True):
-        """ Convert the data in items to construct a
-        record instance if toRecord is True, else
-        do a reverse conversion. items is an iterable
-        that has key/value items, the key is the name
-        of the field, the value is the data to convert.
-        Default converter is 'str'.
-        """
-        res = {}
-        idx = 0 if toRecord else 1
-        for k, v in items:
-            desc = Record.fields.get(k)
-            if not desc:    # ignore any fields not defined
-                continue
-            conv = desc.get('conv', [str, str])[idx]
-            res[k] = conv(v)
-        return res
 
     @staticmethod
     def idToPath(id):
@@ -100,7 +91,7 @@ class XmlStorage:
         root = doc.createElement("log")
         doc.appendChild(root)
         items  = dict(record.elements()).items()
-        fields = XmlStorage.convertFields(items, False)
+        fields = Record.convertFields(items, False)
 
         # sort the fields data according to the definition order
         orders = {k: v['order'] for k, v in Record.fields.items()}
@@ -130,7 +121,8 @@ class XmlStorage:
         absDirPath = os.path.join(XmlStorage.dataDir, *dateEle)
         paths      = []
         if not oldRecord:   # add new record
-            record.id = XmlStorage.genId(timestamp)
+            if not getattr(record, 'id', None):
+                record.id = applib.genId(timestamp)
             commitMsg = 'Add log\n\n%s' % record.id
         else:
             commitMsg = 'Change log\n\n%s' % record.id
@@ -149,16 +141,7 @@ class XmlStorage:
         # create a git commit
         XmlStorage.git.commit(paths, commitMsg)
 
-    @staticmethod
-    def genId(timestamp):
-        """ Generate a record id base on the timestamp
-        and some random data, the result is a sha1 sum.
-        """
-        import hashlib
-        length = 1024
-        ranData = open('/dev/urandom', 'rb').read(length)
-        string = str(timestamp).encode() + ranData
-        return hashlib.sha1(string).hexdigest()
+        return record
 
     @staticmethod
     def allIds():
@@ -203,6 +186,7 @@ class XmlStorage:
         if deletedPaths:
             message = 'Delete log\n\n%s' % '\n'.join(deletedBNames)
             XmlStorage.git.commit(deletedPaths, message)
+        return True
 
     @staticmethod
     def lastLog():
@@ -362,7 +346,7 @@ class XmlStorage:
         # the IDs
         ids = criteria.get('ids')
         if not ids:
-            ids = Record.allIds()
+            ids = XmlStorage.allIds()
         else:
             completeIds = []
             for id in ids:
@@ -372,7 +356,7 @@ class XmlStorage:
         # collect the records
         records = []
         for id in ids:
-            x = Record.load(id)
+            x = XmlStorage.load(id)
             if not x:
                 continue
             if filter(x):

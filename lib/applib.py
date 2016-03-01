@@ -141,11 +141,11 @@ def pageOut(records_data, formater, color=True):
     itr   = iter(records_data)
     try:
         first = next(itr)
-        pager.write(colorFunc(formater(first)), isBytes=False)
+        pager.write(formater(first, colorFunc, n=0), isBytes=False)
     except StopIteration:
         return
     for data in itr:
-        pager.write('\n', colorFunc(formater(data)), isBytes=False)
+        pager.write(formater(data, colorFunc), isBytes=False)
     pager.go()
 
 
@@ -313,3 +313,14 @@ def compreDay(text):
     except:
         raise InvalidTimeException("invalid time: %s" % text)
     return dayPeriod(res)
+
+
+def genId(timestamp):
+    """ Generate a record id base on the timestamp
+    and some random data, the result is a sha1 sum.
+    """
+    import hashlib
+    length = 1024
+    ranData = open('/dev/urandom', 'rb').read(length)
+    string = str(timestamp).encode() + ranData
+    return hashlib.sha1(string).hexdigest()

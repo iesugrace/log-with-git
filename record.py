@@ -68,11 +68,16 @@ class Record(BasicRecord):
         return Record.defaultFormater(data)
 
     @staticmethod
-    def defaultFormater(data):
+    def defaultFormater(data, colorFunc, n=1):
+        """ 'n' parameter controls the number
+        of newline characters to prepend, colorFunc
+        apply color to the text.
+        """
         keys  = ['Author', 'Time', 'MTime', 'Scene', 'People', 'Tag']
         conv  = lambda x: x
         funcs = [conv, isodatetime, isodatetime] + [conv] * 6
-        return Record.formatRecord(keys, funcs, data) + '\n'
+        text  = colorFunc(Record.formatRecord(keys, funcs, data))
+        return  ''.join(['\n'] * n) + text + '\n'
 
     @staticmethod
     def formatRecord(keys, funcs, data):
@@ -154,3 +159,22 @@ class Record(BasicRecord):
         """
         idx = 0 if toRecord else 1
         return Record.fields[name]['conv'][idx]
+
+    @staticmethod
+    def convertFields(items, toRecord=True):
+        """ Make the data in items suitable for creating a
+        record instance if toRecord is True, else do a
+        reverse conversion. items is an iterable that has
+        key/value items, the key is the name of the field,
+        the value is the data to convert.  Default converter
+        is 'str'.
+        """
+        res = {}
+        idx = 0 if toRecord else 1
+        for k, v in items:
+            desc = Record.fields.get(k)
+            if not desc:    # ignore any fields not defined
+                continue
+            conv = desc.get('conv', [str, str])[idx]
+            res[k] = conv(v)
+        return res

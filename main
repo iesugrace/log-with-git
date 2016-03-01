@@ -396,14 +396,16 @@ class App:
                     convList.append(desc)
                     fields.add(field)
                     fmtStr = fmtStr.replace(k, '{%s}' % replacement)
-            def formater(data):
+            def formater(data, colorFunc=None, n=None):
+                """ parameter colorFunc and 'n' are place holders
+                """
                 if convList:
                     for field, replacement, conv in convList:
                         if conv:
                             data[replacement] = conv(data[field])
                         else:
                             data[replacement] = data[field]
-                return fmtStr.format(**data)
+                return fmtStr.format(**data) + '\n'
         return (fields, formater)
 
 
