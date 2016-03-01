@@ -114,6 +114,9 @@ class Log:
         record = Record(**fields)
         record.save()
 
+    def _list(self, fields, criteria, order):
+        return Record.engine.searchLogs(fields, criteria, order)
+
     def checkRequirement(self, **args):
         """ Check if all required fields are provided
         """

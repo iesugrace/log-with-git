@@ -17,6 +17,7 @@ from config import Config
 from log import Log
 from record import Record
 from timeutils import isodatetime, isodate
+import interact
 import applib
 
 class App:
@@ -117,18 +118,30 @@ class App:
         return res
 
 
+    def simpleSearch(self, logger, args):
+        """ Search and return the result as a list
+        Originally for edit and delete actions.
+        """
+        args.extend(['-f', '%I:%t:%mt:%c:%p:%g:%S'])
+        criteria, order, fmt = self.procSearchArgs(args)
+        fields, formater = self.parseDisplayFormat(fmt)
+        result  = list(logger._list(fields, criteria, order))
+        return result
+
+
     def delete(self, args):
         """ Delete logs
 
         Identify logs by the ID, multiple IDs are accepted,
-        either from the command line, or from a file; the
+        either from the command line matching arguments which
+        is used by the listing function, or from a file; the
         file shall have one line for one ID.
         """
         if '--help' in args:
             help('del')
             exit(0)
 
-        ids   = []
+        sOpts = []
         ifile = None
         force = False
         while args:
@@ -142,29 +155,58 @@ class App:
             elif arg == '-f':
                 force = True
             else:   # log ID
-                ids.append(arg)
+                sOpts.append(arg)
+
+        logger = Log(self.configs)
+        result = self.simpleSearch(logger, sOpts)
+        ids    = [x['id'] for x in result]
         if ifile:
             lines = open(ifile).readlines()
             lines = [x.rstrip() for x in lines if len(x) > 1]
             ids.extend(lines)
-        assert ids, "no IDs provided"
+        assert ids, "no IDs provided/matched"
         ids    = set(ids)
-        logger = Log(self.configs)
         logger.delete(ids, force=force)
 
 
     def edit(self, args):
         """ Edit a log
+        IDs are acquired by the command line matching
+        arguments, which is used for the listing function.
         """
         if '--help' in args:
             help('edit')
             exit(0)
 
-        assert len(args) == 1, "wrong arguments"
-        id     = args[0]
-        assert id, "wrong arguments"
-        logger = Log(self.configs)
-        logger.edit(id)
+        assert len(args) > 0, "wrong arguments"
+        logger  = Log(self.configs)
+        result  = self.simpleSearch(logger, args)
+
+        ids = []
+        if len(result) == 1:
+            ids.append(result[0]['id'])
+        else:
+            class E:
+                def __init__(self, data):
+                    self.data = data
+                def __repr__(self):
+                    D     = self.data
+                    keys  = ['Time', 'MTime', 'Scene', 'People', 'Tag']
+                    conv  = lambda x: x
+                    funcs = [isodatetime, isodatetime] + [conv] * 3
+                    text  = Record.formatFields(keys, funcs, D)
+                    text  = Record.formatPrependId(text, D)
+                    text  += '\n%s' % D['subject'][:40]
+                    text  = text.replace('\n', '\n  ')
+                    return text
+            x = [E(r) for r in result]
+            idx, picked = interact.printAndPick(x, lineMode=True, default=-1)
+            if picked:  # user picked one
+                ids.append(picked.data['id'])
+            else:       # user just press Enter, means pick ALL.
+                ids = [x['id'] for x in result]
+        for id in ids:
+            logger.edit(id)
 
 
     def push(self, args):
@@ -333,6 +375,18 @@ class App:
             help('list')
             exit(0)
 
+        criteria, order, fmt = self.procSearchArgs(args)
+        logger  = Log(self.configs)
+        fields, formater = self.parseDisplayFormat(fmt)
+        result  = logger._list(fields, criteria, order)
+        color   = False if fmt else True    # no color if display format specified
+        applib.pageOut(result, formater, color)
+
+
+    def procSearchArgs(self, args):
+        """ Process the arguments, return the
+        criteria, order, and format information.
+        """
         criteria = {}   # search criteria
         order    = None # order criteria
         fmt      = None # what and how to display
@@ -344,11 +398,7 @@ class App:
             criteria['ids']   = x['ids']
             fmt   = x['fmt']
             order = x['order']
-        logger  = Log(self.configs)
-        fields, formater = self.parseDisplayFormat(fmt)
-        result  = Record.engine.searchLogs(fields, criteria, order)
-        color   = False if fmt else True    # no color if display format specified
-        applib.pageOut(result, formater, color)
+        return criteria, order, fmt
 
 
     def parseDisplayFormat(self, fmt):
@@ -445,12 +495,18 @@ pipe | %s add -m message
 %s list --sort time -r              -- sort by time, reverse
 %s list -t 3:5 -S<RE>               -- match time and RE""" % ((bname,) * 22)
 
-    delMsg = """%s del 297aacc                  -- delete log whose id starts with 297aacc
-%s del 297aacc 5e0df2c          -- delete multiple logs
+    delMsg = """Support to match logs using any listing options
+%s del 297aacc                  -- delete log whose id contains 297aacc
+%s del -1                       -- delete the last log
+%s del -t -1                    -- delete last day's logs
 %s del -f 297aacc               -- delete without confirmation
-%s del -i list-of-file          -- get log IDs from a file""" % ((bname,) * 4)
+%s del -i list-of-file          -- get log IDs from a file""" % ((bname,) * 5)
 
-    editMsg = "%s edit <log-id>" % bname
+    #editMsg = "%s edit <log-id>" % bname
+    editMsg = """Support to match logs using any listing options
+%s edit 297aacc                  -- edit log whose id contains 297aacc
+%s edit -1                       -- edit the last log
+%s edit -t -1                    -- edit last day's logs""" % ((bname,) * 3)
 
     pushMsg = """%s push origin                  -- push to remote 'origin'
 %s push origin github           -- push to remote 'origin' and 'github'
