@@ -1,0 +1,9 @@
+Version: v0.2
+Date: 2016-03-02
+
+Changes:
+
+    1. Bug fixes.
+    2. sqlite3 storage is used to improvement query performance.
+    3. Support data export.
+    4. Other updates
