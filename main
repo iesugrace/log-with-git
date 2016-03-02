@@ -7,6 +7,7 @@
 import sys, os
 import re
 import time
+import sqlite3
 
 prog_path = os.path.realpath(__file__)
 prog_dir  = os.path.dirname(prog_path)
@@ -17,6 +18,8 @@ from config import Config
 from log import Log
 from record import Record
 from timeutils import isodatetime, isodate
+from sqlitestorage import SqliteStorage
+from xmlstorage import XmlStorage
 import interact
 import applib
 
@@ -118,14 +121,15 @@ class App:
         return res
 
 
-    def simpleSearch(self, logger, args):
+    def simpleSearch(self, logger, args, fmt='%I:%t:%mt:%c:%p:%g:%S', engine=None):
         """ Search and return the result as a list
         Originally for edit and delete actions.
         """
-        args.extend(['-f', '%I:%t:%mt:%c:%p:%g:%S'])
+        if fmt:
+            args.extend(['-f', fmt])
         criteria, order, fmt = self.procSearchArgs(args)
         fields, formater = self.parseDisplayFormat(fmt)
-        result  = list(logger._list(fields, criteria, order))
+        result  = list(logger._list(fields, criteria, order, engine=engine))
         return result
 
 
@@ -458,21 +462,132 @@ class App:
                 return fmtStr.format(**data) + '\n'
         return (fields, formater)
 
+    def man(self, args):
+        """ Management function, gateway for various
+        management functions, like 'unity', 'export'.
+        """
+        if '--help' in args:
+            help('man')
+            exit(0)
+
+        assert len(args) > 0, "wrong arguments"
+        func = args.pop(0)
+        if func == 'unity':
+            self.flushSqliteWithXml(args)
+        elif func == 'export':
+            self.export(args)
+
+    def export(self, args):
+        """ Export data from the sqlite engine,
+        write it out as text/xml/sqlite.
+        """
+        listArgs = []
+        format = output = None
+        while args:
+            arg = args.pop(0)
+            if arg[:2] == '-f':
+                if len(arg) > 2:
+                    format = arg[2:]
+                else:
+                    assert len(args) > 0, "need argument for -f option"
+                    format = args.pop(0)
+            elif arg[:2] == '-o':
+                if len(arg) > 2:
+                    output = arg[2:]
+                else:
+                    assert len(args) > 0, "need argument for -o option"
+                    output = args.pop(0)
+            else:
+                listArgs.append(arg)
+        assert format and output, "both -f and -o are required"
+        assert not os.path.exists(output), "%s already exists" % output
+        msg = 'export as %s, to %s, confirm? [y/N] ' % (format, output)
+        ans = interact.readstr(msg, default='n')
+        if ans == 'n':
+            return
+        logger = Log(self.configs)
+        result = self.simpleSearch(logger, listArgs, fmt=None, engine=SqliteStorage)
+        if format == 'sqlite':
+            conn   = sqlite3.connect(output)
+            self.recordsToSqlite(conn, result)
+        elif format == 'xml':
+            self.recordsToXml(output, result)
+        elif format == 'text':
+            self.recordsToText(output, result)
+
+    def recordsToXml(self, dir, records):
+        """ Writes the record data as xml files
+        to the directory 'dir', records is a list
+        of dict objects.
+        """
+        for record in records:
+            XmlStorage.saveRecord(record, dir=dir)
+
+    def recordsToText(self, dir, records):
+        """ Writes the record data as xml files
+        to the directory 'dir', records is a list
+        of dict objects.
+        """
+        for record in records:
+            dateEle    = isodate(record['time']).split('-')
+            absDirPath = os.path.join(dir, *dateEle)
+            os.makedirs(absDirPath, exist_ok=True)
+            path = os.path.join(absDirPath, record['id'])
+            code = Record.defaultFormater(record, (lambda x: x), n=0)
+            open(path, 'w').write(code)
+
+    def flushSqliteWithXml(self, args):
+        """ Remove all data in the sqlite storage, and export all
+        records from the xml storage into the sqlite storage, thus,
+        the sqlite storage data can be synchronized after a manual
+        Git operation. Defaults to export all records, and filter-
+        ing options like the listing options are accepted.
+        """
+        logger = Log(self.configs)
+        # all fields shall be fetched, so we ignore user's -f options
+        assert '-f' not in args, '-f option is forbidden'
+        result = self.simpleSearch(logger, args, fmt=None, engine=XmlStorage)
+        self.recordsToSqlite(SqliteStorage.conn, result)
+
+    def recordsToSqlite(self, conn, records):
+        """ Drop the sqlite database table, insert
+        all records from 'records' to it.
+        """
+        cur    = conn.cursor()
+        tbl    = SqliteStorage.recordTbl
+        cur.execute('DROP TABLE IF EXISTS %s' % tbl)
+        SqliteStorage.createTables(conn)
+        fields = list(Record.fields.keys())
+        flds   = ','.join(fields)
+        hlds   = ','.join(['?'] * len(fields))
+        sql    = 'INSERT INTO %s (%s) VALUES (%s)' % (tbl, flds, hlds)
+        count  = 0
+        for data in records:
+            data = Record.convertFields(data.items(), False)
+            vals = [data[k] for k in fields]
+            cur.execute(sql, vals)
+            count += 1
+        conn.commit()
+        conn.close()
+        print('%s records inserted' % count)
 
 def help(cate=None, ofile=sys.stdout):
     bname = os.path.basename(sys.argv[0])
     defaultMsg = "Usage: %s <command> [option [argument]]... [-F config]\n"
     defaultMsg += "       %s <command> --help\n"
-    defaultMsg += "available commands: add, del, edit, list, push, fetch, clone"
+    defaultMsg += "available commands: add, del, edit, list, push, fetch, clone, man"
     defaultMsg = defaultMsg % ((bname,) * 2)
 
-    addMsg = """%s add
+    addMsg = """
+%s add
 %s add -m message
 %s add -m message < file
 pipe | %s add -m message
-%s add -g tag -t time -c scene -p people -m message""" % ((bname,) * 5)
+%s add -g tag -t time -c scene -p people -m message
+""" % ((bname,) * 5)
 
-    listMsg = """%s list                             -- list all
+    listMsg = """
+%s list                             -- list all
 %s list ead1 0c46                   -- list some specific records
 %s list -3                          -- the last three added/changed
 %s list -t 2016                     -- in 2016
@@ -493,30 +608,45 @@ pipe | %s add -m message
 %s list -S<RE> -S<RE> --all-match   -- each of the REs matches any of the fields
 %s list -f '%%i: (%%t, %%mt) %%s'       -- specify the display format
 %s list --sort time -r              -- sort by time, reverse
-%s list -t 3:5 -S<RE>               -- match time and RE""" % ((bname,) * 22)
+%s list -t 3:5 -S<RE>               -- match time and RE
+""" % ((bname,) * 22)
 
-    delMsg = """Support to match logs using any listing options
+    delMsg = """
+Support to match logs using any listing options
 %s del 297aacc                  -- delete log whose id contains 297aacc
 %s del -1                       -- delete the last log
 %s del -t -1                    -- delete last day's logs
 %s del -f 297aacc               -- delete without confirmation
-%s del -i list-of-file          -- get log IDs from a file""" % ((bname,) * 5)
+%s del -i list-of-file          -- get log IDs from a file
+""" % ((bname,) * 5)
 
-    #editMsg = "%s edit <log-id>" % bname
-    editMsg = """Support to match logs using any listing options
+    editMsg = """
+Support to match logs using any listing options
 %s edit 297aacc                  -- edit log whose id contains 297aacc
 %s edit -1                       -- edit the last log
-%s edit -t -1                    -- edit last day's logs""" % ((bname,) * 3)
+%s edit -t -1                    -- edit last day's logs
+""" % ((bname,) * 3)
 
-    pushMsg = """%s push origin                  -- push to remote 'origin'
+    pushMsg = """
+%s push origin                  -- push to remote 'origin'
 %s push origin github           -- push to remote 'origin' and 'github'
-%s push -a                      -- push to all remotes""" % ((bname,) * 3)
+%s push -a                      -- push to all remotes
+""" % ((bname,) * 3)
 
-    fetchMsg = """%s fetch origin                 -- fetch from remote 'origin'
+    fetchMsg = """
+%s fetch origin                 -- fetch from remote 'origin'
 %s fetch origin github          -- fetch from remote 'origin' and 'github'
-%s fetch -a                     -- fetch from all remotes""" % ((bname,) * 3)
+%s fetch -a                     -- fetch from all remotes
+""" % ((bname,) * 3)
 
     cloneMsg = "%s clone <remote-url>" % bname
+
+    manMsg = """
+%s man unity                                    -- recreate sqlite using xml data
+%s man export -f text -o dir [list-options]     -- export as text file to dir
+%s man export -f xml -o dir [list-options]      -- export as xml file to dir
+%s man export -f sqlite -o file [list-options]  -- export to a sqlite file
+""" % ((bname,) * 4)
 
     if cate == 'add':
         msg = addMsg
@@ -532,8 +662,11 @@ pipe | %s add -m message
         msg = fetchMsg
     elif cate == 'clone':
         msg = cloneMsg
+    elif cate == 'man':
+        msg = manMsg
     else:
         msg = defaultMsg
+    msg = msg.strip()
     print(msg, file=ofile)
 
 
@@ -587,6 +720,8 @@ if __name__ == '__main__':
             app.fetch(sys.argv[2:])
         elif cmd == 'clone':
             app.clone(sys.argv[2:])
+        elif cmd == 'man':
+            app.man(sys.argv[2:])
         else:
             raise applib.InvalidCmdException('unrecognized command: %s' % cmd)
     except IndexError:

@@ -82,15 +82,16 @@ class XmlStorage:
         root.appendChild(ele)
 
     @staticmethod
-    def recordToSource(record):
-        """ Compose Xml source code from a record object
+    def recordToSource(recordData):
+        """ Compose Xml source code from a
+        record's data which is a dict object.
         """
         from xml.dom.minidom import Document, Text
         import re
         doc  = Document()
         root = doc.createElement("log")
         doc.appendChild(root)
-        items  = dict(record.elements()).items()
+        items  = dict(recordData).items()
         fields = Record.convertFields(items, False)
 
         # sort the fields data according to the definition order
@@ -116,13 +117,10 @@ class XmlStorage:
         if its timestamp been changed, in such case the
         old log will be deleted.
         """
-        timestamp  = record.time
-        dateEle    = isodate(timestamp).split('-')
-        absDirPath = os.path.join(XmlStorage.dataDir, *dateEle)
-        paths      = []
+        paths = []
+        if not getattr(record, 'id', None):
+            record.id = applib.genId(record.time)
         if not oldRecord:   # add new record
-            if not getattr(record, 'id', None):
-                record.id = applib.genId(timestamp)
             commitMsg = 'Add log\n\n%s' % record.id
         else:
             commitMsg = 'Change log\n\n%s' % record.id
@@ -132,16 +130,25 @@ class XmlStorage:
                 XmlStorage.__delete(None, path=path)
             else:
                 return
-        os.makedirs(absDirPath, exist_ok=True)
-        path = os.path.join(absDirPath, record.id)
-        code = XmlStorage.recordToSource(record)
-        open(path, 'w').write(code)
+        path = XmlStorage.saveRecord(record.elements())
         paths.append(path)
 
         # create a git commit
         XmlStorage.git.commit(paths, commitMsg)
 
         return record
+
+    @staticmethod
+    def saveRecord(recordData, dir=None):
+        if not dir:
+            dir = XmlStorage.dataDir
+        dateEle    = isodate(recordData['time']).split('-')
+        absDirPath = os.path.join(dir, *dateEle)
+        os.makedirs(absDirPath, exist_ok=True)
+        path = os.path.join(absDirPath, recordData['id'])
+        code = XmlStorage.recordToSource(recordData)
+        open(path, 'w').write(code)
+        return path
 
     @staticmethod
     def allIds():
