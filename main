@@ -145,6 +145,7 @@ class App:
             help('del')
             exit(0)
 
+        assert len(args) > 0, "wrong arguments"
         sOpts = []
         ifile = None
         force = False
