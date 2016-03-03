@@ -613,7 +613,7 @@ pipe | %s add -m message
 
     delMsg = """
 Support to match logs using any listing options
-%s del 297aacc                  -- delete log whose id contains 297aacc
+%s del 297aacc                  -- delete log whose id starts with 297aacc
 %s del -1                       -- delete the last log
 %s del -t -1                    -- delete last day's logs
 %s del -f 297aacc               -- delete without confirmation
@@ -622,7 +622,7 @@ Support to match logs using any listing options
 
     editMsg = """
 Support to match logs using any listing options
-%s edit 297aacc                  -- edit log whose id contains 297aacc
+%s edit 297aacc                  -- edit log whose id starts with 297aacc
 %s edit -1                       -- edit the last log
 %s edit -t -1                    -- edit last day's logs
 """ % ((bname,) * 3)

@@ -262,7 +262,8 @@ class E:
         if ids:
             ss = ' OR '.join(['id LIKE ?'] * len(ids))
             whereSql  = '(%s)' % ss
-            whereVals = ['%%%s%%' % id for id in ids]
+            # the provided partial id matches the start of the record's id
+            whereVals = ['%s%%' % id for id in ids]
         elif criteria and (criteria.get('times') or criteria.get('regxs')):
             whereSql, whereVals = E.procTimeAndRe(criteria)
 
