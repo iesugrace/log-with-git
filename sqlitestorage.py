@@ -229,7 +229,7 @@ class E:
                 matchVals.append(pat)
             else:
                 ss = ['%s LIKE ?' % x for x in texts]
-                ss.append('(binary = 0 AND data LIKE ?)')
+                ss.append("(binary = 'false' AND data LIKE ?)")
                 ss = ' OR '.join(ss)
                 matchSqls.append('(%s)' % ss)
                 matchVals.extend([pat] * (len(texts) + 1))
@@ -286,7 +286,7 @@ class E:
         if criteria.get('limit'):
             sql += ' LIMIT %s' % criteria.get('limit')
 
-        cur    = E.conn.cursor()
+        cur = E.conn.cursor()
         cur.execute(sql, vals)
         allElements = cur.fetchall()
         for elements in allElements:
