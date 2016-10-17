@@ -1,8 +1,12 @@
+# import the readline module to give editing
+# support for the input function.
+import readline
+
+
 def read(prompt):
     import sys
     try:
-        print(prompt, end='', file=sys.stderr)
-        i = input()
+        i = input(prompt)
         return i
     except (KeyboardInterrupt, EOFError):
         print()
