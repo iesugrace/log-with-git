@@ -1,6 +1,8 @@
 # import the readline module to give editing
 # support for the input function.
+
 import readline
+import re
 
 
 def read(prompt):
@@ -39,14 +41,18 @@ def readstr(prompt='', default=None):
     When the input starts with double minus sign '--',
     return an empty string.
     """
-    SEP  = ','
+
+    # add the Chinese comma as separator,
+    # use re for splitting.
+    SEP  = '[,，]'
     JSEP = ', '
     def cleanSplit(text):
         """ Split by SEP, strip white spaces
         at the left and the right, return a list.
         """
         if text:
-            xs = text.split(SEP)
+            xs = re.split('[,，]', text)
+            #xs = text.split(SEP)
             xs = [x.strip() for x in xs]
         else:
             xs = []
