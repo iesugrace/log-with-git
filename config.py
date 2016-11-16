@@ -20,7 +20,7 @@ class Config:
 
     def validate(self):
         """ Validate the config items
-        
+
         Rule for the dataDir:
         1. exists and is a directory, or
         2. not yet exists
