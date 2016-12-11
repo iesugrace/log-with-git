@@ -576,7 +576,25 @@ def help(cate=None, ofile=sys.stdout):
     bname = os.path.basename(sys.argv[0])
     defaultMsg = "Usage: %s <command> [option [argument]]... [-F config]\n"
     defaultMsg += "       %s <command> --help\n"
-    defaultMsg += "available commands: add, del, edit, list, push, fetch, clone, man"
+    defaultMsg += "available commands: add, del, edit, list, push, fetch, clone, man\n"
+    defaultMsg += """\nInitialization steps:
+
+1. Create config file with content like the following,
+   the default path of the config is ~/.logrc.
+# Where to store the log data
+dataDir = '/home/joshua/.log'
+# Author name
+authorName = 'Joshua Chen'
+# Author email
+authorEmail = 'iesugrace@gmail.com'
+
+2. Run the command, if the config file is not placed at the
+   default location, specify it with -F option. The directory
+   structure will be created automatically.
+# log add
+# log list
+# log add -F /path/to/config
+"""
     defaultMsg = defaultMsg % ((bname,) * 2)
 
     addMsg = """
