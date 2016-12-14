@@ -8,6 +8,7 @@ import sys, os
 import re
 import time
 import sqlite3
+import tempfile
 
 prog_path = os.path.realpath(__file__)
 prog_dir  = os.path.dirname(prog_path)
@@ -22,6 +23,18 @@ from sqlitestorage import SqliteStorage
 from xmlstorage import XmlStorage
 import interact
 import applib
+
+
+def failure_handler(data):
+    """For called by the log adding/editing method,
+    in case of failure, to prevent data loss.
+    """
+    tmpfile = tempfile.NamedTemporaryFile(delete=False)
+    tmpfile.write(data.encode())
+    tmpfile.close()
+    msg = 'operation failed, data stored here: %s' % tmpfile.name
+    print(msg, file=sys.stderr)
+
 
 class App:
     def __init__(self, configs):
@@ -210,9 +223,9 @@ class App:
                 ids.append(picked.data['id'])
             else:       # user just press Enter, means pick ALL.
                 ids = [x['id'] for x in result]
-        for id in ids:
-            logger.edit(id)
 
+        for id in ids:
+            logger.edit(id, fail_callback=failure_handler)
 
     def push(self, args):
         """ Sync with the git server
@@ -350,9 +363,10 @@ class App:
         if not _time:
             _time = isodatetime()
         logger = Log(self.configs)
-        logger.add(subject=subject, time=_time, scene=scene, people=people,
-                   tag=tag, data=data, binary=binary, interactive=interactive)
-
+        logger.add(subject=subject, time=_time, scene=scene,
+                   people=people, tag=tag, data=data,
+                   binary=binary, interactive=interactive,
+                   fail_callback=failure_handler)
 
     def _list(self, args):
         """ List log summary

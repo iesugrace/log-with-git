@@ -95,7 +95,7 @@ class Log:
         """
         return Record.engine.lastLog()
 
-    def add(self, interactive=False, **fields):
+    def add(self, interactive=False, fail_callback=None, **fields):
         """ Add a log record to the system
         When interactive is True, ask data for subject, time, scene,
         people, tag, and log data from the use interactively, the
@@ -110,9 +110,15 @@ class Log:
         fields['author'] = author
         fields['mtime']  = isodatetime()    # current time for mtime
         assert self.checkRequirement(**fields), "field data not sufficient"
-        fields = Record.convertFields(fields.items())
-        record = Record(**fields)
-        record.save()
+
+        try:
+            fields = Record.convertFields(fields.items())
+            record = Record(**fields)
+            record.save()
+        except:
+            if fail_callback:
+                data = '%s\n\n%s' % (fields['subject'], fields['data'])
+                fail_callback(data)
 
     def _list(self, fields, criteria, order, engine=None):
         """ Caller can specify an engine
@@ -157,7 +163,7 @@ class Log:
         if not postAction: postAction = self.postActionOfDelete
         Record.engine.delete(ids, preAction, postAction)
 
-    def edit(self, id):
+    def edit(self, id, fail_callback=None):
         """ Edit the log of the given id
         """
         ids = Record.matchId(id)
@@ -175,7 +181,14 @@ class Log:
         elements  = dict(oldRecord.elements())
         elements  = self.preActionOfEdit(elements)
         newRecord = self.makeLogEntry(**elements)
-        newRecord.save(oldRecord=oldRecord)
+
+        try:
+            newRecord.save(oldRecord=oldRecord)
+        except:
+            if fail_callback:
+                data = '%s\n\n%s' % (newRecord.subject,
+                                     newRecord.data)
+                fail_callback(data)
 
     def perror(self, msg):
         print(msg, file=sys.stderr)
