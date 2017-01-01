@@ -13,7 +13,9 @@ def editContent(content=None):
     p = subprocess.Popen(shlex.split(cmd))
     p.communicate()
     p.wait()
-    tmpfile.seek(0)
-    content = tmpfile.read()
+
+    # vim may delete the original file,
+    # so we reopen the file to read.
+    content = open(tmpfile.name, 'rb').read()
     os.unlink(tmpfile.name)
     return content
