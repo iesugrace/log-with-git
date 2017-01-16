@@ -294,23 +294,24 @@ def compreDay(text):
     """
     l = len(text)
 
-    try:
-        if text[0] == '-':          # negative day
-            days = int(text)
-            second = time.time() + 86400 * days
-            res = time.localtime(second)
-        elif 1 <= l <= 2:           # a day of the current month
-            y, m = time.localtime()[:2]
-            d = int(text)
-            res = time.strptime('%s%02d%02d' % (y, m, d), '%Y%m%d')
-        elif l == 4:                # day of a specific month
-            y = time.localtime()[0]
-            res = time.strptime('%s%s' % (y, text), '%Y%m%d')
-        elif l == 6:                # month of a specific year
-            res = time.strptime(text, '%Y%m')
-        elif l == 8:                # a day of a month of a year
-            res = time.strptime(text, '%Y%m%d')
-    except:
+    if text == 'today':         # today
+        return todayPeriod()
+    elif text[0] == '-':        # negative day
+        days = int(text)
+        second = time.time() + 86400 * days
+        res = time.localtime(second)
+    elif 1 <= l <= 2:           # a day of the current month
+        y, m = time.localtime()[:2]
+        d = int(text)
+        res = time.strptime('%s%02d%02d' % (y, m, d), '%Y%m%d')
+    elif l == 4:                # day of a specific month
+        y = time.localtime()[0]
+        res = time.strptime('%s%s' % (y, text), '%Y%m%d')
+    elif l == 6:                # month of a specific year
+        res = time.strptime(text, '%Y%m')
+    elif l == 8:                # a day of a month of a year
+        res = time.strptime(text, '%Y%m%d')
+    else:
         raise InvalidTimeException("invalid time: %s" % text)
     return dayPeriod(res)
 
